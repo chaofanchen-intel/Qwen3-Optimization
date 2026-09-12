@@ -1,0 +1,72 @@
+{
+    "protocol": {
+        "device": "GPU",
+        "input_tokens": 1000,
+        "output_tokens": 512,
+        "iterations": 10,
+        "warmup_iterations": 1,
+        "batch_size": 1,
+        "disable_prompt_permutation": true,
+        "resource_monitor": false,
+        "prompt_file": "../benchmark/tests/prompts/qwen3_1k.jsonl",
+        "prompt_index": 0
+    },
+    "models": [
+        {
+            "id": "qwen3_1p7b_fp32",
+            "family": "Qwen3-1.7B",
+            "precision": "FP32",
+            "int4_variant": null,
+            "path": "../benchmark/models/Qwen3-1.7B-FP32"
+        },
+        {
+            "id": "qwen3_1p7b_int8",
+            "family": "Qwen3-1.7B",
+            "precision": "INT8",
+            "int4_variant": null,
+            "path": "../benchmark/models/Qwen3-1.7B-INT8"
+        },
+        {
+            "id": "qwen3_1p7b_int4_g128",
+            "family": "Qwen3-1.7B",
+            "precision": "INT4",
+            "int4_variant": "g128_default",
+            "path": "../benchmark/models/Qwen3-1.7B-INT4-g128"
+        },
+        {
+            "id": "qwen3_1p7b_int4_channelwise",
+            "family": "Qwen3-1.7B",
+            "precision": "INT4",
+            "int4_variant": "channelwise_sym_gminus1",
+            "path": "../benchmark/models/Qwen3-1.7B-INT4"
+        },
+        {
+            "id": "qwen3_0p6b_fp32",
+            "family": "Qwen3-0.6B",
+            "precision": "FP32",
+            "int4_variant": null,
+            "path": "models/converted/Qwen3-0.6B-FP32"
+        },
+        {
+            "id": "qwen3_0p6b_int8",
+            "family": "Qwen3-0.6B",
+            "precision": "INT8",
+            "int4_variant": null,
+            "path": "models/converted/Qwen3-0.6B-INT8"
+        },
+        {
+            "id": "qwen3_0p6b_int4_g128",
+            "family": "Qwen3-0.6B",
+            "precision": "INT4",
+            "int4_variant": "g128_default",
+            "path": "models/converted/Qwen3-0.6B-INT4-g128"
+        },
+        {
+            "id": "qwen3_0p6b_int4_channelwise",
+            "family": "Qwen3-0.6B",
+            "precision": "INT4",
+            "int4_variant": "channelwise_sym_gminus1",
+            "path": "models/converted/Qwen3-0.6B-INT4-channelwise"
+        }
+    ]
+}
