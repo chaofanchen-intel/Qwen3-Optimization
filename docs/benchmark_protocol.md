@@ -7,6 +7,8 @@ prompt and 512 requested output tokens for FP32, INT8, default INT4 g128, and
 the requested INT4 symmetric channel-wise variant. Run every case through both
 OpenVINO GenAI Python and the C++ `model_bench` implementation on the same
 device.
+The canonical matrix uses prompt permutation ON so every measured iteration
+performs a real prefill.
 
 ## Environment
 
@@ -25,8 +27,10 @@ The matrix has eight model artifacts:
 The primary device is `GPU`. The prompt is the existing
 `benchmark/tests/prompts/qwen3_1k.jsonl`, whose actual tokenizer length is
 1000 for both model sizes. Batch size is 1. Warm-up is one iteration and the
-formal run uses ten measured iterations. Prompt permutation is disabled in
-both tools so the same raw token sequence is used on every measured iteration.
+formal run uses ten measured iterations. Prompt permutation is enabled in both
+tools; the runner rewrites token 0 while preserving the 1000-token shape,
+defeating PagedAttention prefix caching. The canonical runner has no
+prefix-cache benchmark mode.
 
 ## Conversion commands
 
@@ -62,8 +66,8 @@ The conversion logs are stored under `results/conversion/`.
 ## Metrics
 
 Both reports retain raw measured iterations and aggregate metrics. The main
-comparison uses arithmetic means, with standard deviation and p50/p90/p95
-also rendered when available:
+comparison uses arithmetic means, with standard deviation retained for
+variability checks:
 
 - TTFT: time to first generated token.
 - TPOT: average time per generated token after the first token.
@@ -76,6 +80,15 @@ also rendered when available:
 Memory and utilization monitoring is disabled in the latency matrix. Run a
 separate diagnostic pass when those measurements are needed because sampling
 can perturb latency.
+
+## Single runner
+
+`run_matrix.py` is the only benchmark entry point. The default mode measures
+the complete 512-token generation; `--prefill-only` sets `-ic 1` and measures
+only cold prefill. `--patch-compare` first removes the source patch, rebuilds
+and measures baseline, then reapplies the patch, rebuilds and measures the
+optimized arm. It restores the initial patch state and records source/plugin
+hashes in `metadata.json`. All headline comparisons use arithmetic means.
 
 ## Commands
 

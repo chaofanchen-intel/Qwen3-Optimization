@@ -6,7 +6,7 @@
         "iterations": 10,
         "warmup_iterations": 1,
         "batch_size": 1,
-        "disable_prompt_permutation": true,
+        "prompt_permutation": true,
         "resource_monitor": false,
         "prompt_file": "../benchmark/tests/prompts/qwen3_1k.jsonl",
         "prompt_index": 0

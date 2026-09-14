@@ -37,29 +37,14 @@ def number(value):
         return None
 
 
-def percentile(values, fraction):
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    position = (len(ordered) - 1) * fraction
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
-
-
 def stats(values):
     clean = [number(value) for value in values]
     clean = [value for value in clean if value is not None]
     if not clean:
-        return {"mean": None, "std": None, "p50": None, "p90": None, "p95": None, "min": None, "max": None}
+        return {"mean": None, "std": None, "min": None, "max": None}
     return {
         "mean": statistics.fmean(clean),
         "std": statistics.pstdev(clean) if len(clean) > 1 else 0.0,
-        "p50": percentile(clean, 0.50),
-        "p90": percentile(clean, 0.90),
-        "p95": percentile(clean, 0.95),
         "min": min(clean),
         "max": max(clean),
     }
@@ -146,7 +131,7 @@ def cpp_record(path: Path, model: dict, device: str) -> dict:
         unit = units.get(metric, "_ms")
         raw[metric] = {
             stat: number(entry.get(f"{stem}_{stat}{unit}"))
-            for stat in ("mean", "std", "p50", "p90", "p95", "min", "max")
+            for stat in ("mean", "std", "min", "max")
         }
     return make_record(model, "cpp", entry.get("device", device), entry.get("input_tokens"), entry.get("output_tokens_mean"), raw, entry, entry.get("measured_iters", 0))
 
@@ -183,8 +168,8 @@ def write_markdown(path: Path, records: list[dict], comparisons: list[dict], run
             f"{fmt(record['compile_s'])} | {fmt(record['ttft_ms'])} | {fmt(record['tpot_ms'])} | "
             f"{fmt(record['total_tps'])} | {fmt(record['decode_tps'])} | {fmt(record['e2e_ms'])} |"
         )
-    lines += ["", "## Percentile Detail", "", "The columns below are mean, population standard deviation, p50, p90, p95, min, and max.", ""]
-    lines += ["| Model | Backend | Metric | Mean | Std | P50 | P90 | P95 | Min | Max |", "|---|---|---|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["", "## Variability Detail", "", "Headline values use arithmetic means. Standard deviation, minimum, and maximum are retained for variability checks.", ""]
+    lines += ["| Model | Backend | Metric | Mean | Std | Min | Max |", "|---|---|---|---:|---:|---:|---:|"]
     for record in records:
         for metric, label in METRICS:
             values = record["metrics"].get(metric, {})
@@ -192,7 +177,7 @@ def write_markdown(path: Path, records: list[dict], comparisons: list[dict], run
                 continue
             lines.append(
                 f"| {record['family']} {record['precision']} {record.get('int4_variant') or ''} | {record['backend']} | {label} | "
-                f"{fmt(values.get('mean'))} | {fmt(values.get('std'))} | {fmt(values.get('p50'))} | {fmt(values.get('p90'))} | {fmt(values.get('p95'))} | {fmt(values.get('min'))} | {fmt(values.get('max'))} |"
+                f"{fmt(values.get('mean'))} | {fmt(values.get('std'))} | {fmt(values.get('min'))} | {fmt(values.get('max'))} |"
             )
     lines += ["", "## Python Versus C++", "", "For latency metrics, a positive percentage means Python is slower. For throughput metrics, a positive percentage means Python is faster.", "", "| Model | Metric | C++ mean | Python mean | Python minus C++ |", "|---|---|---:|---:|---:|"]
     for item in comparisons:
