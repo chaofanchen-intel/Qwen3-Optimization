@@ -16,8 +16,8 @@ numbers are.
 
 The pre-existing TTFT numbers were unusable — they were prefix-cache hits, not
 prefills, and understated real TTFT by 3-5x. The canonical baseline-first
-comparison is [`results.md`](results.md), backed by
-[`cold_ttft_patch_compare_20260913`](../results/cold_ttft_patch_compare_20260913/).
+comparison is [`results.md`](results.md), backed by the formal full-stack run
+[`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/).
 
 Two further methodology corrections were needed before any optimization work:
 
@@ -114,13 +114,17 @@ rebuilding with opt-1. Full provenance is in
 | Qwen3-0.6B | INT8 | 132.35 | 127.11 | −3.96% | 0.99 | 0.12 |
 | Qwen3-0.6B | **INT4 g128** | **141.70** | **137.57** | **−2.91%** | 0.79 | 0.50 |
 | Qwen3-0.6B | INT4 channel-wise | 116.93 | 112.21 | −4.04% | 0.77 | 0.35 |
+| Qwen3-0.6B | FP16 | 146.82 | 149.01 | +1.49% | 0.53 | 1.80 |
 | Qwen3-1.7B | FP32* | 479.72 | 404.45 | −15.69% | 1.65 | 20.00 |
+| Qwen3-1.7B | FP16* | 365.20 | 368.89 | +1.01% | 1.27 | 3.61 |
 | Qwen3-1.7B | INT8* | 276.76 | 279.22 | +0.89% | 2.40 | 7.29 |
 | Qwen3-1.7B | **INT4 g128** | **279.33** | **275.51** | **−1.37%** | 1.32 | 0.73 |
 | Qwen3-1.7B | INT4 channel-wise | 223.43 | 217.87 | −2.49% | 1.75 | 1.50 |
 
-`*` 1.7B FP32 and INT8 are noisy in this sequential baseline-first run and
-are not used as patch-effect claims.
+`*` 1.7B FP32, FP16, and INT8 are noisy in this sequential baseline-first run
+and are not used as patch-effect claims.
+
+The FP16 rows come from [`opt1_fp16_20260915`](../results/opt1_fp16_20260915/).
 
 ## 4. Shipped: opt-2, reuse one DynamicQuantize across FCs sharing an activation
 
@@ -143,11 +147,16 @@ opt-1 applied:
 | Qwen3-0.6B | INT8 | 125.97 | 124.81 | −0.93% |
 | Qwen3-0.6B | **INT4 g128** | **138.26** | **136.24** | **−1.46%** |
 | Qwen3-0.6B | INT4 channel-wise | 112.11 | 109.95 | −1.93% |
+| Qwen3-0.6B | FP16 | 153.87 | 149.97 | −2.54% |
 | Qwen3-1.7B | INT8 | 270.66 | 264.66 | −2.22% |
+| Qwen3-1.7B | FP16* | 375.62 | 373.39 | −0.59% |
 | Qwen3-1.7B | **INT4 g128** | **272.95** | **270.59** | **−0.86%** |
 | Qwen3-1.7B | INT4 channel-wise | 217.47 | 211.74 | −2.64% |
 
 FP32 is unaffected, as it must be — an FP32 graph has no `DynamicQuantize`.
+
+The FP16 rows come from [`opt2_fp16_20260915`](../results/opt2_fp16_20260915/)
+and are noisy, especially for 1.7B.
 
 ## 5. Shipped: opt-3, fold the RoPE into the RMS epilogue
 
@@ -191,37 +200,71 @@ opt-1+opt-2 applied:
 | Qwen3-0.6B | INT8 | 124.25 | 114.95 | −7.49% |
 | Qwen3-0.6B | **INT4 g128** | **136.22** | **128.01** | **−6.02%** |
 | Qwen3-0.6B | INT4 channel-wise | 109.78 | 101.14 | −7.88% |
+| Qwen3-0.6B | FP16 | 152.02 | 135.73 | −10.72% |
 | Qwen3-1.7B | INT8 | 263.57 | 255.98 | −2.88% |
+| Qwen3-1.7B | FP16* | 377.76 | 353.33 | −6.47% |
 | Qwen3-1.7B | **INT4 g128** | **268.09** | **260.12** | **−2.98%** |
 | Qwen3-1.7B | INT4 channel-wise | 210.45 | 202.02 | −4.01% |
 
 The 56 `rope_opt` dispatches disappear entirely.
 
+The FP16 rows come from [`opt3_fp16_20260915`](../results/opt3_fp16_20260915/);
+the 1.7B FP16 baseline is noisy.
+
 ## 6. Cumulative result
 
-| Model | Variant | pristine | opt-1+2+3 | + `GS=0` | total |
-|---|---|---:|---:|---:|---:|
-| Qwen3-0.6B | **INT4 g128** | **141.70** | **127.94** | **116.90** | **−17.5%** |
-| Qwen3-0.6B | INT4 channel-wise | 116.93 | 101.09 | — | −13.5% |
-| Qwen3-1.7B | **INT4 g128** | **279.33** | **260.21** | — | **−6.8%** |
-| Qwen3-1.7B | INT4 channel-wise | 223.43 | 202.02 | — | −9.6% |
+The formal full-stack run is
+[`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/).
+It measures pristine 2026.3.1 first, then applies opt-1, opt-2, and opt-3 as
+one stack, rebuilds, and measures every precision:
 
-`GS=0` is the runtime setting in §7 and applies to Qwen3-0.6B INT4-g128 only.
+| Model | Variant | pristine mean | opt-1+2+3 mean | total |
+|---|---|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 146.32 | 134.80 | −7.9% |
+| Qwen3-0.6B | INT8 | 129.00 | 115.28 | −10.6% |
+| Qwen3-0.6B | **INT4 g128** | **139.96** | **127.09** | **−9.2%** |
+| Qwen3-0.6B | INT4 channel-wise | 114.35 | 100.78 | −11.9% |
+| Qwen3-0.6B | FP16 | 146.30 | 135.29 | −7.5% |
+| Qwen3-1.7B | FP32* | 572.31 | 384.86 | −32.8% |
+| Qwen3-1.7B | FP16* | 361.66 | 427.14 | +18.1% |
+| Qwen3-1.7B | INT8 | 272.08 | 256.26 | −5.8% |
+| Qwen3-1.7B | **INT4 g128** | **277.17** | **259.71** | **−6.3%** |
+| Qwen3-1.7B | INT4 channel-wise | 219.19 | 202.84 | −7.5% |
+
+`*` 1.7B FP32 and FP16 are excluded from patch-effect claims because their
+sequential arms are noisy. The other rows are the complete three-patch result
+for every stable precision.
+The stepwise tables above remain useful for attribution; this table is the
+authoritative end-to-end three-patch comparison.
 
 ## 7. Runtime setting: Qwen3-0.6B INT4-g128 only
 
-`DYNAMIC_QUANTIZATION_GROUP_SIZE=0` is worth a further **−11.0 ms (−8.6%)** on
-Qwen3-0.6B INT4-g128 on top of all three patches (127.94 → 116.90 ms), it also
-improves decode slightly (TPOT 13.95 → 13.53 ms/token), and it *improves*
-accuracy because activations stay f16.
+The formal DQ=0 run is
+[`opt123_dq0_0p6b_fp16_20260915`](../results/opt123_dq0_0p6b_fp16_20260915/).
+It covers all five 0.6B precisions with the complete three-patch stack:
+
+| Model | Variant | DQ=0 pristine | DQ=0 + opt-1+2+3 | Patch delta | DQ=0 vs default after patches |
+|---|---|---:|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 149.23 | 138.58 | −7.13% | +2.80% |
+| Qwen3-0.6B | INT8 | 134.74 | 124.37 | −7.69% | +7.89% |
+| Qwen3-0.6B | **INT4 g128** | **127.97** | **116.24** | **−9.17%** | **−8.54%** |
+| Qwen3-0.6B | INT4 channel-wise | 125.40 | 113.80 | −9.24% | +12.92% |
+| Qwen3-0.6B | FP16 | 149.73 | 141.88 | −5.24% | +4.87% |
+
+Only INT4 g128 benefits from DQ=0. Its final 116.24 ms is **−16.95%** versus
+the default pristine 139.96 ms. The other three formats are slower with the
+setting, so it remains a per-model deployment option rather than a plugin
+heuristic.
 
 This is not a no-op: `execution_config.cpp:349` rewrites an *unset* `0` into
 per-token dynamic quantization on any immad-capable GPU. Setting it explicitly
 marks it user-set and actually disables it.
 
-VTune explains it exactly — activation quantization costs a full extra pass over
-every activation tensor but barely accelerates a GEMM that is bound by *weight*
-dequantization:
+Earlier VTune attribution explains the INT4-g128 result: activation quantization
+costs a full extra pass over every activation tensor but barely accelerates a
+GEMM that is bound by *weight* dequantization. The kernel figures below are the
+representative 0.6B INT4-g128 attribution run; the cross-precision numbers
+above are the formal current comparison:
 
 | | default | `=0` |
 |---|---:|---:|
@@ -229,11 +272,11 @@ dequantization:
 | `dynamic_quantize` | 12.44 ms | **0** |
 | total | 141.49 ms | 131.27 ms |
 
-**It is not shipped as a patch.** The sign of the effect flips with model size
-and quantization scheme (+12.7 ms on 0.6B channel-wise, +4.6 ms on 1.7B g128,
-+56.8 ms on 1.7B channel-wise), and a couple of favourable data points do not
-justify a plugin heuristic. Use it as a per-deployment setting where the model
-is Qwen3-0.6B INT4-g128:
+**It is not shipped as a patch.** In the formal all-three-patch run, DQ=0 is
+`+3.78 ms` on 0.6B FP32, `+9.09 ms` on INT8, `−10.85 ms` on INT4-g128, and
+`+13.02 ms` on channel-wise INT4. The sign flips with quantization scheme, so
+it remains a per-model deployment option rather than a plugin heuristic. Use it
+for Qwen3-0.6B INT4-g128:
 
 ```cpp
 ov::genai::LLMPipeline pipe(model_dir, "GPU",

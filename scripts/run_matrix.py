@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run matched OpenVINO GenAI Python and C++ Qwen3 benchmark cases."""
+"""Run the unified Qwen3 benchmark and source-patch-stack comparison."""
 
 from __future__ import annotations
 
@@ -22,8 +22,11 @@ ROOT = SCRIPT_DIR.parent
 REPO = ROOT.parent
 DEFAULT_CONFIG = ROOT / "configs" / "benchmark_matrix.json"
 DEFAULT_OV_ROOT = REPO / "benchmark" / "openvino"
-DEFAULT_PATCH = DEFAULT_OV_ROOT / "qwen3_patch" / "opt1_rms_block_access.patch"
-SOURCE_RELATIVE = Path("src/plugins/intel_gpu/src/kernel_selector/cl_kernels/rms_gpu_bfyx_opt.cl")
+DEFAULT_PATCHES = [
+    DEFAULT_OV_ROOT / "qwen3_patch" / "opt1_rms_block_access.patch",
+    DEFAULT_OV_ROOT / "qwen3_patch" / "opt2_dynamic_quantize_reuse.patch",
+    DEFAULT_OV_ROOT / "qwen3_patch" / "opt3_fuse_rope_into_rms.patch",
+]
 PLUGIN_RELATIVE = Path("install/runtime/lib/intel64/libopenvino_intel_gpu_plugin.so")
 
 
@@ -40,7 +43,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patch-compare", action="store_true",
                         help="measure unpatched baseline first, then patched optimized arm")
     parser.add_argument("--openvino-root", type=Path, default=None)
-    parser.add_argument("--patch", type=Path, default=DEFAULT_PATCH)
+    parser.add_argument("--patches", type=Path, nargs="+", default=DEFAULT_PATCHES,
+                        help="patch stack for --patch-compare, applied in listed order")
+    parser.add_argument("--patch-stage", type=int, choices=(1, 2, 3), default=None,
+                        help="compare the previous stack stage with this patch stage")
+    parser.add_argument("--runtime-config", type=Path, default=None,
+                        help="JSON of extra OpenVINO plugin properties for C++ runs")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--output-dir", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--no-latest", action="store_true", help=argparse.SUPPRESS)
@@ -79,6 +87,7 @@ def command_for(backend: str, model_path: Path, prompt_path: Path, output_dir: P
     iterations = protocol["iterations"]
     output_tokens = protocol["output_tokens"]
     prompt_index = str(protocol.get("prompt_index", 0))
+    runtime_config = protocol.get("runtime_config")
     if backend == "python":
         ov_genai_root = Path(env["Q3_OV_ROOT"] + ".genai")
         command = [
@@ -97,6 +106,8 @@ def command_for(backend: str, model_path: Path, prompt_path: Path, output_dir: P
         "-pf", str(prompt_path), "-pi", prompt_index, "--no-monitor",
         "--cooldown-between-runs", "0", "-r", str(output_dir / "detailed.csv"), "-rj", str(output_dir / "detailed.json"),
     ]
+    if runtime_config:
+        command.extend(["-lc", str(runtime_config)])
     return command
 
 
@@ -145,28 +156,48 @@ def patch_check(ov_root: Path, patch: Path, reverse: bool) -> bool:
     return git_run(ov_root, arguments, check=False).returncode == 0
 
 
-def patch_state(ov_root: Path, patch: Path) -> str:
-    forward = patch_check(ov_root, patch, reverse=False)
-    reverse = patch_check(ov_root, patch, reverse=True)
-    if forward and not reverse:
+def patch_stack_state(ov_root: Path, patches: list[Path]) -> str:
+    if not patches:
+        raise RuntimeError("patch stack cannot be empty")
+    first_forward = patch_check(ov_root, patches[0], reverse=False)
+    last_reverse = patch_check(ov_root, patches[-1], reverse=True)
+    if first_forward and not last_reverse:
         return "unapplied"
-    if reverse and not forward:
+    if last_reverse and not first_forward:
         return "applied"
-    raise RuntimeError("cannot determine patch state; expected exactly one clean apply direction")
+    raise RuntimeError(
+        "cannot determine patch stack state; expected the complete stack to be "
+        "cleanly applied or cleanly unapplied"
+    )
 
 
-def set_patch_state(ov_root: Path, patch: Path, target: str) -> None:
-    current = patch_state(ov_root, patch)
-    if current == target:
+def patch_prefix_state(ov_root: Path, patches: list[Path]) -> int:
+    for prefix_length in range(len(patches) + 1):
+        previous_applied = prefix_length == 0 or patch_check(
+            ov_root, patches[prefix_length - 1], reverse=True
+        )
+        next_unapplied = prefix_length == len(patches) or patch_check(
+            ov_root, patches[prefix_length], reverse=False
+        )
+        if previous_applied and next_unapplied:
+            return prefix_length
+    raise RuntimeError("cannot determine patch prefix state")
+
+
+def set_patch_prefix(ov_root: Path, patches: list[Path], target_prefix: int) -> None:
+    if not 0 <= target_prefix <= len(patches):
+        raise ValueError(f"invalid patch prefix: {target_prefix}")
+    current_prefix = patch_prefix_state(ov_root, patches)
+    if current_prefix == target_prefix:
         return
-    if target == "applied":
-        run_command(["git", "-C", str(ov_root), "apply", str(patch)], REPO)
-    elif target == "unapplied":
-        run_command(["git", "-C", str(ov_root), "apply", "--reverse", str(patch)], REPO)
+    if current_prefix < target_prefix:
+        for patch in patches[current_prefix:target_prefix]:
+            run_command(["git", "-C", str(ov_root), "apply", str(patch)], REPO)
     else:
-        raise ValueError(f"unknown patch state: {target}")
-    if patch_state(ov_root, patch) != target:
-        raise RuntimeError(f"patch state did not become {target}")
+        for patch in reversed(patches[target_prefix:current_prefix]):
+            run_command(["git", "-C", str(ov_root), "apply", "--reverse", str(patch)], REPO)
+    if patch_prefix_state(ov_root, patches) != target_prefix:
+        raise RuntimeError(f"patch prefix did not become {target_prefix}")
 
 
 def file_digest(path: Path) -> str | None:
@@ -180,21 +211,28 @@ def file_digest(path: Path) -> str | None:
 
 
 def source_diff_digest(ov_root: Path) -> str:
-    result = git_run(ov_root, ["diff", "--binary", "--", str(SOURCE_RELATIVE)])
+    result = git_run(ov_root, ["diff", "--binary"])
     return hashlib.sha256(result.stdout.encode()).hexdigest()
 
 
-def patch_provenance(ov_root: Path, patch: Path, build_dir: Path) -> dict:
-    source_path = ov_root / SOURCE_RELATIVE
+def patch_provenance(
+    ov_root: Path, patches: list[Path], applied_prefix: int, build_dir: Path
+) -> dict:
     plugin_path = ov_root / PLUGIN_RELATIVE
     return {
         "source_commit": git_run(ov_root, ["rev-parse", "HEAD"]).stdout.strip(),
-        "patch_state": patch_state(ov_root, patch),
-        "patch_file": str(patch),
-        "patch_sha256": file_digest(patch),
-        "source_file": str(source_path),
-        "source_file_sha256": file_digest(source_path),
+        "patch_state": (
+            "unapplied" if applied_prefix == 0
+            else "applied" if applied_prefix == len(patches)
+            else "partial"
+        ),
+        "applied_prefix": applied_prefix,
+        "patches": [
+            {"file": str(patch), "sha256": file_digest(patch)}
+            for patch in patches
+        ],
         "source_diff_sha256": source_diff_digest(ov_root),
+        "source_diff_files": git_run(ov_root, ["diff", "--name-only"]).stdout.splitlines(),
         "build_dir": str(build_dir),
         "plugin_artifact": str(plugin_path),
         "plugin_artifact_sha256": file_digest(plugin_path),
@@ -270,7 +308,7 @@ def render_patch_comparison(run_dir: Path, rows: list[dict], manifest: dict) -> 
     lines = [
         f"# Cold-start TTFT patch comparison: `{run_dir.name}`",
         "",
-        "Baseline is measured before applying the source patch. Optimized is measured after applying it.",
+        "Baseline is measured before applying the source patch stack. Optimized is measured after applying it.",
         "Both arms use prompt permutation ON and `-ic 1`; values below are arithmetic means over the measured iterations.",
         "",
         "| Model | Variant | Baseline mean ms | Optimized mean ms | Delta ms | Delta | Baseline std | Optimized std |",
@@ -302,17 +340,17 @@ def run_patch_arm(
     config_path: Path,
     model_entries: list[dict],
     ov_root: Path,
-    patch: Path,
+    patches: list[Path],
+    applied_prefix: int,
     build_dir: Path,
     manifest: dict,
     manifest_path: Path,
 ) -> dict:
-    expected_state = "unapplied" if arm == "baseline" else "applied"
-    if patch_state(ov_root, patch) != expected_state:
+    if patch_prefix_state(ov_root, patches) != applied_prefix:
         raise RuntimeError(f"{arm} arm started with the wrong patch state")
 
     build_commands = build_plugin(ov_root, build_dir, args.jobs)
-    provenance = patch_provenance(ov_root, patch, build_dir)
+    provenance = patch_provenance(ov_root, patches, applied_prefix, build_dir)
     provenance["build_commands"] = build_commands
     manifest["arms"].append({"name": arm, "status": "built", "provenance": provenance})
     write_json(manifest_path, manifest)
@@ -333,6 +371,8 @@ def run_patch_arm(
     ]
     if args.models:
         command.extend(["--models", *args.models])
+    if args.runtime_config:
+        command.extend(["--runtime-config", str(args.runtime_config)])
     run_command(command, ROOT, patch_child_environment(ov_root))
 
     results = {
@@ -356,25 +396,45 @@ def run_patch_comparison(args: argparse.Namespace) -> int:
             raise SystemExit(f"unknown model ids: {', '.join(sorted(missing))}")
 
     ov_root = (args.openvino_root or Path(os.environ.get("Q3_OV_ROOT", DEFAULT_OV_ROOT))).resolve()
-    patch = args.patch.resolve()
+    patches = [patch.resolve() for patch in args.patches]
+    if args.runtime_config:
+        args.runtime_config = args.runtime_config.resolve()
     build_dir = ov_root / "build"
     run_id = args.run_id or time.strftime("cold_ttft_patch_compare_%Y%m%d_%H%M%S")
     run_dir = ROOT / "results" / run_id
     if run_dir.exists():
         raise SystemExit(f"result directory already exists: {run_dir}")
-    if not patch.is_file():
-        raise SystemExit(f"patch file not found: {patch}")
+    missing_patches = [patch for patch in patches if not patch.is_file()]
+    if missing_patches:
+        raise SystemExit(f"patch file not found: {missing_patches[0]}")
+    if args.runtime_config and not args.runtime_config.is_file():
+        raise SystemExit(f"runtime config file not found: {args.runtime_config}")
     if not build_dir.is_dir():
         raise SystemExit(f"OpenVINO build directory not found: {build_dir}")
+    if len(patches) != len(DEFAULT_PATCHES):
+        raise SystemExit("--patches must name the complete three-patch stack")
 
-    initial_state = patch_state(ov_root, patch)
+    initial_prefix = patch_prefix_state(ov_root, patches)
+    if args.patch_stage is None:
+        baseline_prefix = 0
+        optimized_prefix = len(patches)
+    else:
+        baseline_prefix = args.patch_stage - 1
+        optimized_prefix = args.patch_stage
     manifest = {
         "run_id": run_id,
         "created_local": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "openvino_root": str(ov_root),
         "openvino_commit": git_run(ov_root, ["rev-parse", "HEAD"]).stdout.strip(),
-        "patch": str(patch),
-        "initial_patch_state": initial_state,
+        "patches": [str(patch) for patch in patches],
+        "initial_patch_state": (
+            "unapplied" if initial_prefix == 0
+            else "applied" if initial_prefix == len(patches)
+            else "partial"
+        ),
+        "initial_patch_prefix": initial_prefix,
+        "baseline_patch_prefix": baseline_prefix,
+        "optimized_patch_prefix": optimized_prefix,
         "protocol": {
             "input_tokens": config["protocol"]["input_tokens"],
             "output_tokens": 1,
@@ -384,6 +444,7 @@ def run_patch_comparison(args: argparse.Namespace) -> int:
             "summary_statistic": "arithmetic_mean",
             "device": config["protocol"]["device"],
             "attention_backend": "PA (ov::genai::LLMPipeline default)",
+            "runtime_config": str(args.runtime_config) if args.runtime_config else None,
         },
         "models": [entry["id"] for entry in model_entries],
         "arms": [],
@@ -393,17 +454,17 @@ def run_patch_comparison(args: argparse.Namespace) -> int:
     write_json(manifest_path, manifest)
 
     try:
-        set_patch_state(ov_root, patch, "unapplied")
+        set_patch_prefix(ov_root, patches, baseline_prefix)
         baseline_dir = run_dir / "baseline"
         baseline = run_patch_arm(
             "baseline", baseline_dir, args, config_path, model_entries, ov_root,
-            patch, build_dir, manifest, manifest_path,
+            patches, baseline_prefix, build_dir, manifest, manifest_path,
         )
-        set_patch_state(ov_root, patch, "applied")
+        set_patch_prefix(ov_root, patches, optimized_prefix)
         optimized_dir = run_dir / "optimized"
         optimized = run_patch_arm(
             "optimized", optimized_dir, args, config_path, model_entries, ov_root,
-            patch, build_dir, manifest, manifest_path,
+            patches, optimized_prefix, build_dir, manifest, manifest_path,
         )
 
         rows = []
@@ -427,13 +488,24 @@ def run_patch_comparison(args: argparse.Namespace) -> int:
             )
         render_patch_comparison(run_dir, rows, manifest)
         manifest["status"] = "completed"
-        manifest["final_patch_state"] = patch_state(ov_root, patch)
+        final_prefix = patch_prefix_state(ov_root, patches)
+        manifest["final_patch_state"] = (
+            "unapplied" if final_prefix == 0
+            else "applied" if final_prefix == len(patches)
+            else "partial"
+        )
+        manifest["final_patch_prefix"] = final_prefix
         write_json(manifest_path, manifest)
         print(f"comparison: {run_dir / 'comparison.md'}")
         return 0
     finally:
-        set_patch_state(ov_root, patch, initial_state)
-        manifest["final_patch_state"] = patch_state(ov_root, patch)
+        set_patch_prefix(ov_root, patches, initial_prefix)
+        manifest["final_patch_state"] = (
+            "unapplied" if initial_prefix == 0
+            else "applied" if initial_prefix == len(patches)
+            else "partial"
+        )
+        manifest["final_patch_prefix"] = initial_prefix
         if manifest.get("status") != "completed":
             manifest["status"] = "failed"
         write_json(manifest_path, manifest)
@@ -454,6 +526,13 @@ def main() -> int:
         protocol["output_tokens"] = args.output_tokens
     protocol["prompt_permutation"] = True
     protocol["summary_statistic"] = "arithmetic_mean"
+    if args.runtime_config:
+        if "python" in args.backends:
+            raise SystemExit("--runtime-config is supported only with --backends cpp")
+        runtime_config = args.runtime_config.resolve()
+        if not runtime_config.is_file():
+            raise SystemExit(f"runtime config file not found: {runtime_config}")
+        protocol["runtime_config"] = str(runtime_config)
     if args.prefill_only:
         protocol["output_tokens"] = 1
     if args.smoke:

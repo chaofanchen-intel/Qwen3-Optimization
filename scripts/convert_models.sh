@@ -13,7 +13,7 @@ SKIP_DOWNLOAD=0
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/convert_models.sh [all|download|fp32|int8|int4-g128|int4-channelwise] [--force] [--skip-download]
+Usage: bash scripts/convert_models.sh [all|download|fp16|fp32|int8|int4-g128|int4-channelwise] [--force] [--skip-download]
 
 The default target is all. All conversions use ~/envs/qwen_env/bin/optimum-cli.
 EOF
@@ -22,7 +22,7 @@ EOF
 target="all"
 for arg in "$@"; do
     case "$arg" in
-        all|download|fp32|int8|int4-g128|int4-channelwise) target="$arg" ;;
+        all|download|fp16|fp32|int8|int4-g128|int4-channelwise) target="$arg" ;;
         --force) FORCE=1 ;;
         --skip-download) SKIP_DOWNLOAD=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -77,10 +77,14 @@ download_source
 
 case "$target" in
     all)
+        convert_one Qwen3-0.6B-FP16 --task text-generation-with-past --weight-format fp16 --trust-remote-code
         convert_one Qwen3-0.6B-FP32 --task text-generation-with-past --trust-remote-code
         convert_one Qwen3-0.6B-INT8 --task text-generation-with-past --weight-format int8 --trust-remote-code
         convert_one Qwen3-0.6B-INT4-g128 --task text-generation-with-past --weight-format int4 --trust-remote-code
         convert_one Qwen3-0.6B-INT4-channelwise --task text-generation-with-past --weight-format int4 --sym --group-size -1 --ratio 1 --trust-remote-code
+        ;;
+    fp16)
+        convert_one Qwen3-0.6B-FP16 --task text-generation-with-past --weight-format fp16 --trust-remote-code
         ;;
     fp32)
         convert_one Qwen3-0.6B-FP32 --task text-generation-with-past --trust-remote-code

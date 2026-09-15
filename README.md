@@ -55,16 +55,17 @@ Qwen3-Optimization/
   > and therefore measure a real prefill. Do not add
   > `--disable-prompt-permutation`; the single runner owns this setting.
 
-Existing 1.7B artifacts remain in `../benchmark/models` and are referenced by
-the matrix rather than copied. This keeps the experiment directory suitable
-for later hotspot profiling, router accuracy evaluation, and optimization
-work without duplicating large model files.
+Existing 1.7B artifacts, including FP16, remain in `../benchmark/models` and
+are referenced by the matrix rather than copied. This keeps the experiment
+directory suitable for later hotspot profiling, router accuracy evaluation,
+and optimization work without duplicating large model files.
 
 ## Precision mapping
 
 | Matrix label | Model directory | Conversion meaning |
 |---|---|---|
 | FP32 | `Qwen3-*-FP32` | floating-point OpenVINO IR |
+| FP16 | `Qwen3-*-FP16` | half-precision OpenVINO IR |
 | INT8 | `Qwen3-*-INT8` | Optimum default weight-only INT8; no explicit group size/symmetry/ratio |
 | INT4-g128 | `Qwen3-*-INT4-g128` | Optimum default INT4, `group-size=128`, asymmetric |
 | INT4-channelwise | `Qwen3-*-INT4-channelwise` | `--weight-format int4 --sym --group-size -1 --ratio 1` |
@@ -103,10 +104,19 @@ Run only the prefill portion:
 python scripts/run_matrix.py --prefill-only --run-id ttft_YYYYMMDD --iterations 10
 ```
 
-Run the baseline-first source patch comparison:
+Run the baseline-first comparison for the complete three-patch stack:
 
 ```bash
 python scripts/run_matrix.py --patch-compare --run-id qwen3_patch_YYYYMMDD --iterations 10
+```
+
+Run the 0.6B DQ=0 experiment with the same three-patch stack:
+
+```bash
+python scripts/run_matrix.py --patch-compare \
+  --runtime-config configs/qwen3_int4_g128_dq0.json \
+  --models qwen3_0p6b_fp32 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+  --run-id qwen3_dq0_0p6b_YYYYMMDD --iterations 10
 ```
 
 Apply the shipped GPU-plugin patches (see [`patches/`](patches/) for the index,

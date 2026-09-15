@@ -20,6 +20,13 @@
             "path": "../benchmark/models/Qwen3-1.7B-FP32"
         },
         {
+            "id": "qwen3_1p7b_fp16",
+            "family": "Qwen3-1.7B",
+            "precision": "FP16",
+            "int4_variant": null,
+            "path": "../benchmark/models/Qwen3-1.7B-FP16"
+        },
+        {
             "id": "qwen3_1p7b_int8",
             "family": "Qwen3-1.7B",
             "precision": "INT8",
@@ -46,6 +53,13 @@
             "precision": "FP32",
             "int4_variant": null,
             "path": "models/converted/Qwen3-0.6B-FP32"
+        },
+        {
+            "id": "qwen3_0p6b_fp16",
+            "family": "Qwen3-0.6B",
+            "precision": "FP16",
+            "int4_variant": null,
+            "path": "models/converted/Qwen3-0.6B-FP16"
         },
         {
             "id": "qwen3_0p6b_int8",

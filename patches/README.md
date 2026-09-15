@@ -114,25 +114,47 @@ baseline-first harness (measure, apply, rebuild, measure).
 | Qwen3-0.6B | INT8 | −3.96% | −0.93% | −7.49% |
 | Qwen3-0.6B | **INT4 g128** | **−2.91%** | **−1.46%** | **−6.02%** |
 | Qwen3-0.6B | INT4 channel-wise | −4.04% | −1.93% | −7.88% |
+| Qwen3-0.6B | FP16 | +1.49% | −2.54% | −10.72% |
 | Qwen3-1.7B | INT8 | noisy | −2.22% | −2.88% |
+| Qwen3-1.7B | FP16 | +1.01% | −0.59% | −6.47% |
 | Qwen3-1.7B | **INT4 g128** | **−1.37%** | **−0.86%** | **−2.98%** |
 | Qwen3-1.7B | INT4 channel-wise | −2.49% | −2.64% | −4.01% |
 
-Cumulative against pristine 2026.3.1, in milliseconds:
+Cumulative against pristine 2026.3.1 from the formal all-precision stack run
+[`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/),
+in milliseconds:
 
 | Model | Variant | pristine | opt-1+2+3 | total |
 |---|---|---:|---:|---:|
-| Qwen3-0.6B | **INT4 g128** | **141.70** | **127.94** | **−9.7%** |
-| Qwen3-0.6B | INT4 channel-wise | 116.93 | 101.09 | −13.5% |
-| Qwen3-1.7B | **INT4 g128** | **279.33** | **260.21** | **−6.8%** |
-| Qwen3-1.7B | INT4 channel-wise | 223.43 | 202.02 | −9.6% |
+| Qwen3-0.6B | FP32 | 146.32 | 134.80 | −7.9% |
+| Qwen3-0.6B | INT8 | 129.00 | 115.28 | −10.6% |
+| Qwen3-0.6B | **INT4 g128** | **139.96** | **127.09** | **−9.2%** |
+| Qwen3-0.6B | INT4 channel-wise | 114.35 | 100.78 | −11.9% |
+| Qwen3-0.6B | FP16 | 146.30 | 135.29 | −7.5% |
+| Qwen3-1.7B | FP32* | 572.31 | 384.86 | −32.8% |
+| Qwen3-1.7B | FP16* | 361.66 | 427.14 | +18.1% |
+| Qwen3-1.7B | INT8 | 272.08 | 256.26 | −5.8% |
+| Qwen3-1.7B | **INT4 g128** | **277.17** | **259.71** | **−6.3%** |
+| Qwen3-1.7B | INT4 channel-wise | 219.19 | 202.84 | −7.5% |
 
-Qwen3-1.7B FP32 is excluded from every claim: its run-to-run std reaches
-14–25 ms. Every other cell has std ≤ 1.5 ms in both arms.
+`*` Qwen3-1.7B FP32 and FP16 are excluded from patch-effect claims because
+their sequential arms are noisy. The other rows are the complete three-patch
+result for every stable precision.
 
-Adding the `DYNAMIC_QUANTIZATION_GROUP_SIZE=0` runtime setting — which applies
-to **Qwen3-0.6B INT4-g128 only** and is *not* part of these patches — takes that
-configuration to **116.90 ms**, i.e. **−17.5%** against pristine. See
+The formal DQ=0 run is
+[`opt123_dq0_0p6b_fp16_20260915`](../results/opt123_dq0_0p6b_fp16_20260915/). It applies
+`DYNAMIC_QUANTIZATION_GROUP_SIZE=0` to all five 0.6B precisions:
+
+| Model | Variant | DQ=0 pristine | DQ=0 + opt-1+2+3 | Patch delta | DQ=0 vs default after patches |
+|---|---|---:|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 149.23 | 138.58 | −7.13% | +2.80% |
+| Qwen3-0.6B | INT8 | 134.74 | 124.37 | −7.69% | +7.89% |
+| Qwen3-0.6B | **INT4 g128** | **127.97** | **116.24** | **−9.17%** | **−8.54%** |
+| Qwen3-0.6B | INT4 channel-wise | 125.40 | 113.80 | −9.24% | +12.92% |
+| Qwen3-0.6B | FP16 | 149.73 | 141.88 | −5.24% | +4.87% |
+
+Only INT4 g128 benefits from DQ=0. Its final 116.24 ms is **−16.95%** versus
+the default pristine 139.96 ms. See
 [`../docs/optimizations.md`](../docs/optimizations.md) §7 for why it is a
 per-deployment setting rather than a patch.
 
@@ -142,11 +164,9 @@ per-deployment setting rather than a patch.
 cd /home/chaofan/model_benchmark
 source Qwen3-Optimization/scripts/env.sh
 
-# measure one patch against the current tree state, with provenance
-python3 Qwen3-Optimization/scripts/run_matrix.py --patch-compare --prefill-only \
-    --backends cpp --iterations 10 \
-    --patch benchmark/openvino/qwen3_patch/opt3_fuse_rope_into_rms.patch \
-    --run-id my_run
+# measure pristine versus the complete default patch stack, with provenance
+python3 Qwen3-Optimization/scripts/run_matrix.py --patch-compare \
+   --run-id my_run --iterations 10
 
 # per-kernel attribution on the real PagedAttention pipeline
 ./Qwen3-Optimization/scripts/vtune_gpu.sh \

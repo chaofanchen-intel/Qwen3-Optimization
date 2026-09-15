@@ -4,7 +4,8 @@ Standalone Intel GPU plugin patches that reduce **cold-start prefill / TTFT** of
 dense Qwen3 models on Intel integrated GPUs, with the emphasis on INT4 weight
 compression (`group_size=128` first, per-output-channel second).
 
-This is the dense-Qwen3 counterpart to [`../qwen3.5_patch/`](../qwen3.5_patch/),
+This is the dense-Qwen3 counterpart to
+[`../../benchmark/openvino/qwen3.5_patch/`](../../benchmark/openvino/qwen3.5_patch/),
 which targets the hybrid SSM Qwen3.5 models. The two sets are disjoint: the
 Qwen3.5 patches address Gated-DeltaNet / causal-conv1d op patterns that a dense
 Qwen3 graph does not contain.
@@ -41,7 +42,7 @@ so a repeated identical prompt is answered from cached KV blocks and reports a
 TTFT that never ran a prefill — this silently understated every previously
 recorded TTFT by 3-5x. The current baseline-first source comparison is recorded
 in
-[`Qwen3-Optimization/docs/results.md`](../../../Qwen3-Optimization/docs/results.md).
+[`../docs/results.md`](../docs/results.md).
 
 ## Where prefill time actually goes
 
@@ -203,9 +204,9 @@ and plugin hashes in its `metadata.json`.
 
 | Run | Patch measured | Baseline is |
 |---|---|---|
-| [`cold_ttft_patch_compare_20260913`](../../../Qwen3-Optimization/results/cold_ttft_patch_compare_20260913/) | opt-1 | pristine 2026.3.1 |
-| [`opt2_dq_reuse_20260913`](../../../Qwen3-Optimization/results/opt2_dq_reuse_20260913/) | opt-2 | opt-1 applied |
-| [`opt3_rope_rms_20260915`](../../../Qwen3-Optimization/results/opt3_rope_rms_20260915/) | opt-3 | opt-1 + opt-2 applied |
+| [`cold_ttft_patch_compare_20260913`](../results/cold_ttft_patch_compare_20260913/) | opt-1 | pristine 2026.3.1 |
+| [`opt2_dq_reuse_20260913`](../results/opt2_dq_reuse_20260913/) | opt-2 | opt-1 applied |
+| [`opt3_rope_rms_20260915`](../results/opt3_rope_rms_20260915/) | opt-3 | opt-1 + opt-2 applied |
 
 Per-patch delta (each measured against the previous stage):
 
@@ -232,18 +233,41 @@ does what it claims.
 
 ### Cumulative
 
-End-to-end cold-start TTFT, 1000 input tokens, pristine 2026.3.1 versus all
-three patches:
+The formal all-precision stack run is
+[`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/).
+It measures pristine 2026.3.1 first, then applies opt-1, opt-2, and opt-3 as
+one stack:
 
-| Model | Variant | pristine | opt-1+2+3 | total |
+| Model | Variant | pristine mean | opt-1+2+3 mean | total |
 |---|---|---:|---:|---:|
-| Qwen3-0.6B | **INT4 g128** | **141.70** | **127.94** | **−9.7%** |
-| Qwen3-0.6B | INT4 channel-wise | 116.93 | 101.09 | −13.5% |
-| Qwen3-1.7B | **INT4 g128** | **279.33** | **260.21** | **−6.8%** |
-| Qwen3-1.7B | INT4 channel-wise | 223.43 | 202.02 | −9.6% |
+| Qwen3-0.6B | FP32 | 146.32 | 134.80 | −7.9% |
+| Qwen3-0.6B | INT8 | 129.00 | 115.28 | −10.6% |
+| Qwen3-0.6B | **INT4 g128** | **139.96** | **127.09** | **−9.2%** |
+| Qwen3-0.6B | INT4 channel-wise | 114.35 | 100.78 | −11.9% |
+| Qwen3-0.6B | FP16 | 146.30 | 135.29 | −7.5% |
+| Qwen3-1.7B | FP32* | 572.31 | 384.86 | −32.8% |
+| Qwen3-1.7B | FP16* | 361.66 | 427.14 | +18.1% |
+| Qwen3-1.7B | INT8 | 272.08 | 256.26 | −5.8% |
+| Qwen3-1.7B | **INT4 g128** | **277.17** | **259.71** | **−6.3%** |
+| Qwen3-1.7B | INT4 channel-wise | 219.19 | 202.84 | −7.5% |
 
-Adding the `DYNAMIC_QUANTIZATION_GROUP_SIZE=0` runtime setting described below
-takes Qwen3-0.6B INT4-g128 to **116.90 ms**, i.e. **−17.5%** against pristine.
+`*` 1.7B FP32 and FP16 are excluded from patch-effect claims because their
+sequential arms are noisy.
+
+The formal DQ=0 run is
+[`opt123_dq0_0p6b_fp16_20260915`](../results/opt123_dq0_0p6b_fp16_20260915/):
+
+| Model | Variant | DQ=0 pristine | DQ=0 + opt-1+2+3 | Patch delta | DQ=0 vs default after patches |
+|---|---|---:|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 149.23 | 138.58 | −7.13% | +2.80% |
+| Qwen3-0.6B | INT8 | 134.74 | 124.37 | −7.69% | +7.89% |
+| Qwen3-0.6B | **INT4 g128** | **127.97** | **116.24** | **−9.17%** | **−8.54%** |
+| Qwen3-0.6B | INT4 channel-wise | 125.40 | 113.80 | −9.24% | +12.92% |
+| Qwen3-0.6B | FP16 | 149.73 | 141.88 | −5.24% | +4.87% |
+
+Only INT4 g128 benefits from DQ=0. Its final 116.24 ms is **−16.95%** versus
+the default pristine 139.96 ms; DQ=0 is a per-model runtime setting, not a
+source patch.
 
 opt-1 and opt-3 both remove activation traffic that is independent of the weight
 quantization, so their absolute gain is roughly constant (≈4 ms and ≈8 ms per
@@ -270,17 +294,18 @@ unset. `execution_config.cpp` rewrites an unset `0` to per-token dynamic
 quantization on any immad-capable platform; setting `0` explicitly marks it
 user-set and genuinely disables it.
 
-| Model | default | `=0` | delta |
-|---|---:|---:|---:|
-| Qwen3-0.6B INT4-g128 | 140.61 | 128.72 | **−11.89** |
-| Qwen3-0.6B INT4-channel-wise | 114.64 | 125.86 | +11.22 |
-| Qwen3-0.6B INT8 | 129.42 | 128.36 | −1.06 |
-| Qwen3-1.7B INT4-g128 | 278.26 | 280.37 | +2.11 |
-| Qwen3-1.7B INT4-channel-wise | 221.33 | 272.53 | +51.20 |
-| Qwen3-1.7B INT8 | 273.83 | 292.34 | +18.51 |
+The current all-three-patch comparison is:
 
-VTune explains the 0.6B-g128 case exactly — activation quantization costs a full
-extra pass but barely speeds up a GEMM that is bound by *weight* dequant:
+| Model | Variant | default after patches | `=0` after patches | delta |
+|---|---|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 134.80 | 138.58 | +3.78 |
+| Qwen3-0.6B | INT8 | 115.28 | 124.37 | +9.09 |
+| Qwen3-0.6B | **INT4 g128** | **127.09** | **116.24** | **−10.85** |
+| Qwen3-0.6B | INT4-channel-wise | 100.78 | 113.80 | +13.02 |
+
+Earlier VTune attribution explains the 0.6B-g128 case — activation quantization
+costs a full extra pass but barely speeds up a GEMM that is bound by *weight*
+dequant:
 
 | | default | `=0` |
 |---|---:|---:|
@@ -289,10 +314,10 @@ extra pass but barely speeds up a GEMM that is bound by *weight* dequant:
 | total | 141.49 ms | 131.27 ms |
 
 It is shipped as a **documented per-model runtime setting, not a patch**: the
-sign of the effect flips with both model size and quantization scheme, and two
-favourable data points are not enough to justify a plugin heuristic. For
-Qwen3-0.6B INT4-g128 specifically it is worth −8.5% TTFT and *improves* accuracy
-(activations stay f16).
+sign of the effect flips with quantization scheme even within 0.6B. For
+Qwen3-0.6B INT4-g128 specifically it is worth −8.54% after all three patches
+and *improves* accuracy because activations stay f16. The other three 0.6B
+formats become slower.
 
 The principled fix is to stop paying for `DynamicQuantize` as a standalone pass
 by fusing it into its producer. See open items below.
@@ -315,7 +340,7 @@ Ranked by measured headroom on Qwen3-0.6B INT4-g128, after opt-1/2/3.
    consumes PagedAttention's output. Neither producer is a cldnn kernel whose
    epilogue we can extend, and a GEMM epilogue cannot compute a per-token
    quantization scale because the row is split across work groups.
-   `../qwen3.5_patch/opt7_fuse_rms_into_dynamic_quantize.patch` covers only the
+   `../../benchmark/openvino/qwen3.5_patch/opt7_fuse_rms_into_dynamic_quantize.patch` covers only the
    RMS-fed third and **cannot fire here**: it requires 128-element activation
    groups, while this systolic-capable GPU defaults to per-token quantization
    (verified — it applies cleanly after opt3 but folds nothing).
