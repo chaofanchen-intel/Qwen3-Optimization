@@ -18,20 +18,24 @@ Transformers 5.2.0
 Torch 2.13.0
 ```
 
-## Layout
-
 ## Start here
 
 | Document | Contents |
 |---|---|
-| [`docs/optimizations.md`](docs/optimizations.md) | TTFT optimization log: hotspots, shipped patch, rejected ideas, remaining headroom |
-| [`docs/results.md`](docs/results.md) | Canonical cold-start TTFT and baseline/opt-1 comparison, using arithmetic means |
-| [`../benchmark/openvino/qwen3_patch/`](../benchmark/openvino/qwen3_patch/) | The GPU-plugin patches themselves |
+| [`docs/optimizations.md`](docs/optimizations.md) | TTFT optimization log: hotspots, the three shipped patches, rejected ideas, remaining headroom |
+| [`docs/results.md`](docs/results.md) | Canonical cold-start TTFT report: per-patch and cumulative, arithmetic means |
+| [`patches/`](patches/) | Archived copy of the GPU-plugin patches with an index, correctness evidence, results, and a drift guard |
+| [`../benchmark/openvino/qwen3_patch/`](../benchmark/openvino/qwen3_patch/) | Canonical patch directory (delivery copy) and the full engineering write-up |
+
+## Layout
 
 ```text
 Qwen3-Optimization/
 ├── configs/                 # versioned experiment matrix and protocol knobs
 ├── docs/                    # protocol, interpretation, and generated results
+├── patches/                 # archived GPU-plugin patches + index (canonical copy
+│                            #   lives in ../benchmark/openvino/qwen3_patch/;
+│                            #   run patches/sync_from_canonical.sh to check drift)
 ├── inputs/                  # prompt and future accuracy-analysis inputs
 ├── models/
 │   ├── source/              # downloaded source checkpoints, not committed
@@ -103,6 +107,18 @@ Run the baseline-first source patch comparison:
 
 ```bash
 python scripts/run_matrix.py --patch-compare --run-id qwen3_patch_YYYYMMDD --iterations 10
+```
+
+Apply the shipped GPU-plugin patches (see [`patches/`](patches/) for the index,
+correctness evidence, and per-patch results):
+
+```bash
+cd ../benchmark/openvino
+git apply qwen3_patch/opt1_rms_block_access.patch
+git apply qwen3_patch/opt2_dynamic_quantize_reuse.patch
+git apply qwen3_patch/opt3_fuse_rope_into_rms.patch
+cmake --build build --target openvino_intel_gpu_plugin -j"$(nproc)"
+cp bin/intel64/Release/libopenvino_intel_gpu_plugin.so install/runtime/lib/intel64/
 ```
 
 The runner invokes both backends by default. Use `--backends python` or

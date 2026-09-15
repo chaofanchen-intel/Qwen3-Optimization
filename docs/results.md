@@ -44,6 +44,66 @@ Machine-readable comparison: [comparison.csv](../results/cold_ttft_patch_compare
 [comparison.json](../results/cold_ttft_patch_compare_20260913/comparison.json),
 and [metadata.json](../results/cold_ttft_patch_compare_20260913/metadata.json).
 
+## Opt-2 Cold Prefill
+
+Run: [`opt2_dq_reuse_20260913`](../results/opt2_dq_reuse_20260913/)
+
+Baseline arm is opt-1 applied; optimized arm adds
+`opt2_dynamic_quantize_reuse.patch`. TTFT arithmetic means in milliseconds:
+
+| Model | Variant | Baseline mean | Opt-2 mean | Delta | Baseline std | Opt-2 std |
+|---|---|---:|---:|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 143.40 | 143.78 | +0.26% | 0.36 | 0.36 |
+| Qwen3-0.6B | INT8 | 125.97 | 124.81 | -0.93% | 0.56 | 0.21 |
+| Qwen3-0.6B | **INT4 g128** | **138.26** | **136.24** | **-1.46%** | 0.51 | 0.43 |
+| Qwen3-0.6B | INT4 channel-wise | 112.11 | 109.95 | -1.93% | 0.29 | 0.16 |
+| Qwen3-1.7B | FP32* | 553.85 | 359.78 | -35.04% | 14.37 | 0.84 |
+| Qwen3-1.7B | INT8 | 270.66 | 264.66 | -2.22% | 0.84 | 0.75 |
+| Qwen3-1.7B | **INT4 g128** | **272.95** | **270.59** | **-0.86%** | 0.74 | 1.08 |
+| Qwen3-1.7B | INT4 channel-wise | 217.47 | 211.74 | -2.64% | 0.69 | 0.47 |
+
+FP32 is unaffected, as it must be: an FP32 graph contains no `DynamicQuantize`.
+
+## Opt-3 Cold Prefill
+
+Run: [`opt3_rope_rms_20260915`](../results/opt3_rope_rms_20260915/)
+
+Baseline arm is opt-1 + opt-2 applied; optimized arm adds
+`opt3_fuse_rope_into_rms.patch`. TTFT arithmetic means in milliseconds:
+
+| Model | Variant | Baseline mean | Opt-3 mean | Delta | Baseline std | Opt-3 std |
+|---|---|---:|---:|---:|---:|---:|
+| Qwen3-0.6B | FP32 | 143.10 | 134.91 | -5.73% | 0.39 | 0.29 |
+| Qwen3-0.6B | INT8 | 124.25 | 114.95 | -7.49% | 0.21 | 0.26 |
+| Qwen3-0.6B | **INT4 g128** | **136.22** | **128.01** | **-6.02%** | 0.34 | 0.55 |
+| Qwen3-0.6B | INT4 channel-wise | 109.78 | 101.14 | -7.88% | 0.32 | 0.70 |
+| Qwen3-1.7B | FP32* | 432.40 | 381.96 | -11.66% | 2.05 | 25.01 |
+| Qwen3-1.7B | INT8 | 263.57 | 255.98 | -2.88% | 0.45 | 0.51 |
+| Qwen3-1.7B | **INT4 g128** | **268.09** | **260.12** | **-2.98%** | 0.25 | 0.72 |
+| Qwen3-1.7B | INT4 channel-wise | 210.45 | 202.02 | -4.01% | 0.18 | 0.40 |
+
+Opt-3 is bit-exact: 4 prompts x 128 greedy tokens reproduce the unpatched
+plugin's output md5 on both Qwen3-0.6B INT4-g128 and Qwen3-1.7B channel-wise.
+
+`*` Qwen3-1.7B FP32 is excluded from every patch-effect claim: its run-to-run
+std reaches 14-25 ms.
+
+## Cumulative
+
+Pristine 2026.3.1 versus all three patches, TTFT means in milliseconds:
+
+| Model | Variant | Pristine | Opt-1+2+3 | Total |
+|---|---|---:|---:|---:|
+| Qwen3-0.6B | **INT4 g128** | **141.70** | **127.94** | **-9.7%** |
+| Qwen3-0.6B | INT4 channel-wise | 116.93 | 101.09 | -13.5% |
+| Qwen3-1.7B | **INT4 g128** | **279.33** | **260.21** | **-6.8%** |
+| Qwen3-1.7B | INT4 channel-wise | 223.43 | 202.02 | -9.6% |
+
+Adding the `DYNAMIC_QUANTIZATION_GROUP_SIZE=0` runtime setting (Qwen3-0.6B
+INT4-g128 only, see
+[`optimizations.md`](optimizations.md#7-runtime-setting-qwen3-06b-int4-g128-only))
+takes that configuration to **116.90 ms**, i.e. **-17.5%** against pristine.
+
 ## Commands
 
 All modes use the same runner:
