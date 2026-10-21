@@ -4,17 +4,19 @@ Standalone Intel GPU plugin patches that reduce **cold-start prefill / TTFT** of
 dense Qwen3 models on Intel integrated GPUs, with the emphasis on INT4 weight
 compression (`group_size=128` first, per-output-channel second).
 
-This is the dense-Qwen3 counterpart to
-[`../../benchmark/openvino/qwen3.5_patch/`](../../benchmark/openvino/qwen3.5_patch/),
+This is the dense-Qwen3 counterpart to [`../qwen3.5_patch/`](../qwen3.5_patch/),
 which targets the hybrid SSM Qwen3.5 models. The two sets are disjoint: the
 Qwen3.5 patches address Gated-DeltaNet / causal-conv1d op patterns that a dense
 Qwen3 graph does not contain.
 
 ## Base
 
-Patches are generated against this repository's OpenVINO checkout at release tag
-`2026.3.1` (`759c5a6ab8c066af5f4bc5ebd04643706012a37d`) and apply with `git apply`
-to a pristine tree.
+Patches are generated against OpenVINO 2026.4.1 release tag
+`e213a14725769a6a2bf86fc86650aa78a9c05d3e` and apply with `git apply` to a
+pristine `2026.4_base` tree.
+
+Compatibility checks are recorded in
+[VALIDATION_2026.4.1.md](https://github.com/chaofanchen-intel/openvino/blob/2026.4_base/benchmark/openvino/VALIDATION_2026.4.1.md).
 
 ```bash
 git apply qwen3_patch/opt1_rms_block_access.patch
@@ -32,7 +34,7 @@ rebuild via `OV_DISABLE_ROPE_RMS_FUSION=1` (used for A/B).
 | | |
 |---|---|
 | GPU | Intel Graphics iGPU, Pantherlake-P, 32 XVE x 10 threads, 2.45 GHz, XMX present |
-| Runtime | OpenVINO + GenAI 2026.3.1, `ATTENTION_BACKEND=PA` (the `LLMPipeline` default) |
+| Runtime | OpenVINO + GenAI 2026.4, `ATTENTION_BACKEND=PA` (the `LLMPipeline` default) |
 | Workload | 1000-token cold prefill, batch 1, greedy, `-ic 1` |
 | Models | Qwen3-0.6B and Qwen3-1.7B, FP32 / INT8 / INT4-g128 / INT4-channel-wise |
 | Driver | `model_bench llm` (C++), prompt permutation ON |
@@ -40,9 +42,9 @@ rebuild via `OV_DISABLE_ROPE_RMS_FUSION=1` (used for A/B).
 Prompt permutation must stay ON. PA's latency scheduler enables prefix caching,
 so a repeated identical prompt is answered from cached KV blocks and reports a
 TTFT that never ran a prefill — this silently understated every previously
-recorded TTFT by 3-5x. The current baseline-first source comparison is recorded
+recorded TTFT by 3-5x. The historical baseline-first source comparison is recorded
 in
-[`../docs/results.md`](../docs/results.md).
+[`Qwen3-Optimization/docs/results.md`](../../../Qwen3-Optimization/docs/results.md).
 
 ## Where prefill time actually goes
 
@@ -204,9 +206,9 @@ and plugin hashes in its `metadata.json`.
 
 | Run | Patch measured | Baseline is |
 |---|---|---|
-| [`cold_ttft_patch_compare_20260913`](../results/cold_ttft_patch_compare_20260913/) | opt-1 | pristine 2026.3.1 |
-| [`opt2_dq_reuse_20260913`](../results/opt2_dq_reuse_20260913/) | opt-2 | opt-1 applied |
-| [`opt3_rope_rms_20260915`](../results/opt3_rope_rms_20260915/) | opt-3 | opt-1 + opt-2 applied |
+| [`cold_ttft_patch_compare_20260913`](../../../Qwen3-Optimization/results/cold_ttft_patch_compare_20260913/) | opt-1 | historical pristine 2026.3.1 |
+| [`opt2_dq_reuse_20260913`](../../../Qwen3-Optimization/results/opt2_dq_reuse_20260913/) | opt-2 | opt-1 applied |
+| [`opt3_rope_rms_20260915`](../../../Qwen3-Optimization/results/opt3_rope_rms_20260915/) | opt-3 | opt-1 + opt-2 applied |
 
 Per-patch delta (each measured against the previous stage):
 
@@ -234,8 +236,8 @@ does what it claims.
 ### Cumulative
 
 The formal all-precision stack run is
-[`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/).
-It measures pristine 2026.3.1 first, then applies opt-1, opt-2, and opt-3 as
+[`opt123_all_precisions_fp16_20260915`](../../../Qwen3-Optimization/results/opt123_all_precisions_fp16_20260915/).
+The historical run measured pristine 2026.3.1 first, then applied opt-1, opt-2, and opt-3 as
 one stack:
 
 | Model | Variant | pristine mean | opt-1+2+3 mean | total |
@@ -244,18 +246,15 @@ one stack:
 | Qwen3-0.6B | INT8 | 129.00 | 115.28 | −10.6% |
 | Qwen3-0.6B | **INT4 g128** | **139.96** | **127.09** | **−9.2%** |
 | Qwen3-0.6B | INT4 channel-wise | 114.35 | 100.78 | −11.9% |
-| Qwen3-0.6B | FP16 | 146.30 | 135.29 | −7.5% |
 | Qwen3-1.7B | FP32* | 572.31 | 384.86 | −32.8% |
-| Qwen3-1.7B | FP16* | 361.66 | 427.14 | +18.1% |
 | Qwen3-1.7B | INT8 | 272.08 | 256.26 | −5.8% |
 | Qwen3-1.7B | **INT4 g128** | **277.17** | **259.71** | **−6.3%** |
 | Qwen3-1.7B | INT4 channel-wise | 219.19 | 202.84 | −7.5% |
 
-`*` 1.7B FP32 and FP16 are excluded from patch-effect claims because their
-sequential arms are noisy.
+`*` 1.7B FP32 is excluded from patch-effect claims because both arms are noisy.
 
 The formal DQ=0 run is
-[`opt123_dq0_0p6b_fp16_20260915`](../results/opt123_dq0_0p6b_fp16_20260915/):
+[`opt123_dq0_0p6b_fp16_20260915`](../../../Qwen3-Optimization/results/opt123_dq0_0p6b_fp16_20260915/):
 
 | Model | Variant | DQ=0 pristine | DQ=0 + opt-1+2+3 | Patch delta | DQ=0 vs default after patches |
 |---|---|---:|---:|---:|---:|
@@ -263,7 +262,6 @@ The formal DQ=0 run is
 | Qwen3-0.6B | INT8 | 134.74 | 124.37 | −7.69% | +7.89% |
 | Qwen3-0.6B | **INT4 g128** | **127.97** | **116.24** | **−9.17%** | **−8.54%** |
 | Qwen3-0.6B | INT4 channel-wise | 125.40 | 113.80 | −9.24% | +12.92% |
-| Qwen3-0.6B | FP16 | 149.73 | 141.88 | −5.24% | +4.87% |
 
 Only INT4 g128 benefits from DQ=0. Its final 116.24 ms is **−16.95%** versus
 the default pristine 139.96 ms; DQ=0 is a per-model runtime setting, not a
@@ -340,7 +338,7 @@ Ranked by measured headroom on Qwen3-0.6B INT4-g128, after opt-1/2/3.
    consumes PagedAttention's output. Neither producer is a cldnn kernel whose
    epilogue we can extend, and a GEMM epilogue cannot compute a per-token
    quantization scale because the row is split across work groups.
-   `../../benchmark/openvino/qwen3.5_patch/opt7_fuse_rms_into_dynamic_quantize.patch` covers only the
+   `../qwen3.5_patch/opt7_fuse_rms_into_dynamic_quantize.patch` covers only the
    RMS-fed third and **cannot fire here**: it requires 128-element activation
    groups, while this systolic-capable GPU defaults to per-token quantization
    (verified — it applies cleanly after opt3 but folds nothing).
@@ -359,9 +357,16 @@ Ranked by measured headroom on Qwen3-0.6B INT4-g128, after opt-1/2/3.
 cd /home/chaofan/model_benchmark
 source Qwen3-Optimization/scripts/env.sh
 
-# baseline-first source comparison (builds both arms and restores patch state)
+# baseline-first comparison for the complete default patch stack
 python3 Qwen3-Optimization/scripts/run_matrix.py \
    --patch-compare --run-id my_run --iterations 10
+
+# 0.6B runtime-setting comparison with the same patch stack
+python3 Qwen3-Optimization/scripts/run_matrix.py \
+   --patch-compare \
+   --runtime-config Qwen3-Optimization/configs/qwen3_int4_g128_dq0.json \
+   --models qwen3_0p6b_fp32 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+   --run-id my_dq0_run --iterations 10
 
 # VTune GPU kernel breakdown on the real PA pipeline
 ./Qwen3-Optimization/scripts/vtune_gpu.sh \

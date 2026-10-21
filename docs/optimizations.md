@@ -1,5 +1,10 @@
 # Qwen3 Prefill/TTFT Optimization
 
+> The profiling narrative and measurements in this file are historical
+> 2026.3.1 experiments. The active patches are now based on OpenVINO 2026.4.1;
+> see [`performance_2026.4.1.md`](performance_2026.4.1.md) for the new runtime
+> comparison.
+
 Target: reduce cold-start TTFT of Qwen3-0.6B and Qwen3-1.7B on the Intel iGPU,
 with INT4 `group_size=128` as the primary case and INT4 per-output-channel as
 the secondary one.

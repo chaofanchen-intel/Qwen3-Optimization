@@ -10,13 +10,24 @@ The Python environment is intentionally fixed to:
 
 ```text
 ~/envs/qwen_env
-OpenVINO 2026.3.1
-OpenVINO GenAI 2026.3.1
+OpenVINO 2026.4.1
+OpenVINO GenAI 2026.4.1.0
 Optimum Intel 2.1.0
 NNCF 3.2.0
 Transformers 5.2.0
 Torch 2.13.0
 ```
+
+For the 2026.4.1 patch sweep, `scripts/env.sh` uses the existing local
+OpenVINO/GenAI Python bindings (2026.4.0 / 2026.4.0.0) with the source-built
+2026.4.1 GPU plugin from `benchmark/openvino/bin/intel64/Release`. The helper
+checks that the loaded plugin comes from that build directory. Both benchmark
+arms use this same runtime combination; no shared `install/` files are
+overwritten.
+
+The shipped Qwen3 patches now target the OpenVINO 2026.4.1 release tag. The
+2026.3.1 measurements below remain historical; sequential 2026.4.1 patch results
+are recorded in [`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md).
 
 ## Start here
 
@@ -24,6 +35,7 @@ Torch 2.13.0
 |---|---|
 | [`docs/optimizations.md`](docs/optimizations.md) | TTFT optimization log: hotspots, the three shipped patches, rejected ideas, remaining headroom |
 | [`docs/results.md`](docs/results.md) | Canonical cold-start TTFT report: per-patch and cumulative, arithmetic means |
+| [`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md) | New 2026.4.1 baseline and sequential patch sweep |
 | [`patches/`](patches/) | Archived copy of the GPU-plugin patches with an index, correctness evidence, results, and a drift guard |
 | [`../benchmark/openvino/qwen3_patch/`](../benchmark/openvino/qwen3_patch/) | Canonical patch directory (delivery copy) and the full engineering write-up |
 

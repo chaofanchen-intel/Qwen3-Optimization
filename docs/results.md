@@ -1,5 +1,10 @@
 # Qwen3 Benchmark Results
 
+> **Historical results:** the runs in this report used the 2026.3.1 runtime.
+> The active patch base is now OpenVINO 2026.4.1; the sequential patch sweep on
+> that base is documented in
+> [`performance_2026.4.1.md`](performance_2026.4.1.md).
+
 This is the canonical Qwen3 performance report. All headline latency and
 throughput values use the arithmetic mean over measured iterations. Prompt
 permutation is always ON, so PA prefix caching cannot turn a measured prefill

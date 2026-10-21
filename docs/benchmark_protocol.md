@@ -12,10 +12,17 @@ performs a real prefill.
 
 ## Environment
 
-All Python commands must use `~/envs/qwen_env/bin/python`. The local OpenVINO
-tree is `../benchmark/openvino/install`, and the C++ executable is
-`../model_bench/build/model_bench`. `scripts/env.sh` makes these paths explicit
-and rejects a Python environment that does not import OpenVINO 2026.3.1.
+All Python commands must use `~/envs/qwen_env/bin/python`. The current patch
+base is OpenVINO 2026.4.1 with OpenVINO GenAI 2026.4.1.0. `scripts/env.sh`
+uses the existing local OpenVINO/GenAI Python bindings (2026.4.0 /
+2026.4.0.0) and the source-built 2026.4.1 GPU plugin in
+`../benchmark/openvino/bin/intel64/Release`. It checks the loaded plugin path.
+Both arms of the new patch sweep use this same runtime combination; the shared
+`install/` directory is not overwritten.
+
+The preconverted model artifacts and conversion logs are retained from the
+historical 2026.3.1-compatible export environment; they were not re-exported for
+this patch-only runtime rebenchmark.
 
 ## Matrix
 
@@ -61,7 +68,8 @@ optimum-cli export openvino -m models/source/Qwen3-0.6B \
 ```
 
 For the default INT4 command, omission of `--group-size` intentionally tests
-Optimum's default g128 behavior in the installed 2026.3.1-compatible stack.
+Optimum's default g128 behavior in the historical 2026.3.1-compatible export
+stack used to produce the retained artifacts.
 The INT8 command likewise omits `--group-size`, `--sym`, and `--ratio`; its
 quantization settings are entirely Optimum defaults apart from selecting
 `--weight-format int8`.
