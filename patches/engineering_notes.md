@@ -34,10 +34,10 @@ rebuild via `OV_DISABLE_ROPE_RMS_FUSION=1` (used for A/B).
 | | |
 |---|---|
 | GPU | Intel Graphics iGPU, Pantherlake-P, 32 XVE x 10 threads, 2.45 GHz, XMX present |
-| Runtime | OpenVINO + GenAI 2026.4, `ATTENTION_BACKEND=PA` (the `LLMPipeline` default) |
-| Workload | 1000-token cold prefill, batch 1, greedy, `-ic 1` |
-| Models | Qwen3-0.6B and Qwen3-1.7B, FP32 / INT8 / INT4-g128 / INT4-channel-wise |
-| Driver | `model_bench llm` (C++), prompt permutation ON |
+| Runtime | OpenVINO 2026.4.1 + GenAI 2026.4.1.0, `ATTENTION_BACKEND=PA` |
+| Workload | Current rebenchmark: 1000 input / 512 output tokens, batch 1, greedy; historical TTFT results use `-ic 1` |
+| Models | Current rebenchmark: both sizes, FP16 / INT8 / INT4-g128 / INT4-channel-wise; FP32 excluded |
+| Driver | Current rebenchmark: OpenVINO GenAI Python and C++ `model_bench`; prompt permutation ON |
 
 Prompt permutation must stay ON. PA's latency scheduler enables prefix caching,
 so a repeated identical prompt is answered from cached KV blocks and reports a
@@ -197,6 +197,11 @@ absorbs part of their cost (6.14 -> 7.08 ms by the OV counters) while 4.94 ms of
 RoPE goes to zero.
 
 ## Results
+
+The per-patch TTFT figures below are historical 2026.3.1 measurements. The
+current 2026.4.1 full-generation rebenchmark, including each cumulative patch
+stage and both benchmark implementations, is documented in
+[`Qwen3-Optimization/docs/performance_2026.4.1.md`](../../../Qwen3-Optimization/docs/performance_2026.4.1.md).
 
 Each patch was measured with the same provenance-backed harness: it measures the
 unpatched arm first, applies the patch, rebuilds the GPU plugin, and measures

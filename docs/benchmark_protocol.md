@@ -3,22 +3,35 @@
 ## Objective
 
 Measure Qwen3-1.7B and Qwen3-0.6B text generation at a fixed 1000-token
-prompt and 512 requested output tokens for FP32, INT8, default INT4 g128, and
-the requested INT4 symmetric channel-wise variant. Run every case through both
-OpenVINO GenAI Python and the C++ `model_bench` implementation on the same
-device.
-The canonical matrix uses prompt permutation ON so every measured iteration
-performs a real prefill.
+prompt and 512 requested output tokens. The canonical matrix contains ten
+artifacts; this 2026.4.1 rebenchmark intentionally excludes FP32 and tests
+FP16, INT8, INT4 g128, and INT4 channel-wise for both model sizes. Run every
+case through both OpenVINO GenAI Python and the C++ `model_bench` implementation
+on the same device. The canonical matrix uses prompt permutation ON so every
+measured iteration performs a real prefill.
 
 ## Environment
 
 All Python commands must use `~/envs/qwen_env/bin/python`. The current patch
 base is OpenVINO 2026.4.1 with OpenVINO GenAI 2026.4.1.0. `scripts/env.sh`
-uses the existing local OpenVINO/GenAI Python bindings (2026.4.0 /
-2026.4.0.0) and the source-built 2026.4.1 GPU plugin in
-`../benchmark/openvino/bin/intel64/Release`. It checks the loaded plugin path.
-Both arms of the new patch sweep use this same runtime combination; the shared
-`install/` directory is not overwritten.
+sets the GPU plugin path to `../benchmark/openvino/bin/intel64/Release`;
+`q3_require_environment` verifies these versions and the loaded plugin path.
+The C++ `model_bench` binary is
+rebuilt against the same local 2026.4.1 runtime before testing. Builds write
+the GPU plugin to `bin/`; `cmake --install` is not used, so the existing
+`install/` tree is preserved.
+
+Reconfigure and rebuild the C++ runner when changing OpenVINO runtimes:
+
+```bash
+cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+cmake -S ../model_bench -B ../model_bench/build -DCMAKE_BUILD_TYPE=Release \
+  -DOpenVINOGenAI_DIR="$Q3_OV_INSTALL/runtime/cmake" \
+  -DOpenVINO_DIR="$Q3_OV_INSTALL/runtime/cmake"
+cmake --build ../model_bench/build --target model_bench --parallel 8
+q3_require_environment
+```
 
 The preconverted model artifacts and conversion logs are retained from the
 historical 2026.3.1-compatible export environment; they were not re-exported for
@@ -26,10 +39,13 @@ this patch-only runtime rebenchmark.
 
 ## Matrix
 
-The matrix has ten model artifacts:
+The checked-in matrix has ten model artifacts:
 
 - Qwen3-1.7B: FP32, FP16, INT8, INT4 g128, INT4 channel-wise.
 - Qwen3-0.6B: FP32, FP16, INT8, INT4 g128, INT4 channel-wise.
+
+The 2026.4.1 rebenchmark omits FP32 and runs the other eight variants through
+both backends at every cumulative patch stage.
 
 The primary device is `GPU`. The prompt is the existing
 `benchmark/tests/prompts/qwen3_1k.jsonl`, whose actual tokenizer length is
@@ -100,27 +116,37 @@ can perturb latency.
 
 ## Single runner
 
-`run_matrix.py` is the only benchmark entry point. The default mode measures
-the complete 512-token generation; `--prefill-only` sets `-ic 1` and measures
-only cold prefill. `--patch-compare` first removes the complete opt-1 -> opt-2
--> opt-3 stack, rebuilds and measures pristine baseline, then reapplies the
-stack, rebuilds and measures the optimized arm. It restores the initial patch
-state and records every patch, source/plugin hashes, and runtime config in
-`metadata.json`. All headline comparisons use arithmetic means.
+`run_matrix.py` is the benchmark entry point. The default mode measures the
+complete 512-token generation; `--prefill-only` sets `-ic 1` and measures only
+cold prefill. `--patch-compare` is the C++ TTFT comparison mode: it first
+removes the complete opt-1 -> opt-2 -> opt-3 stack, rebuilds and measures the
+pristine baseline, then reapplies the stack, rebuilds and measures the
+optimized arm. It restores the initial patch state and records the patches,
+source/plugin hashes, and runtime config in `metadata.json`. The 2026.4.1
+full-generation sweep runs the four cumulative source states as separate
+matrices. All headline comparisons use arithmetic means.
 
 ## Commands
 
 ```bash
 cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+q3_require_environment
 bash scripts/convert_models.sh all
-python scripts/run_matrix.py --run-id gpu_1k_512_YYYYMMDD --iterations 10
-python scripts/summarize_results.py results/gpu_1k_512_YYYYMMDD
+"$Q3_PYTHON" scripts/run_matrix.py \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id gpu_1k_512_YYYYMMDD --iterations 10
+"$Q3_PYTHON" scripts/summarize_results.py results/gpu_1k_512_YYYYMMDD
 
 # Complete three-patch cold prefill comparison.
-python scripts/run_matrix.py --patch-compare --run-id qwen3_patch_YYYYMMDD --iterations 10
+"$Q3_PYTHON" scripts/run_matrix.py --patch-compare \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id qwen3_patch_YYYYMMDD --iterations 10
 
 # 0.6B DQ=0 plus the same three-patch comparison.
-python scripts/run_matrix.py --patch-compare \
+"$Q3_PYTHON" scripts/run_matrix.py --patch-compare \
   --runtime-config configs/qwen3_int4_g128_dq0.json \
   --models qwen3_0p6b_fp32 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
   --run-id qwen3_dq0_0p6b_YYYYMMDD --iterations 10
@@ -129,6 +155,6 @@ python scripts/run_matrix.py --patch-compare \
 For a small validation:
 
 ```bash
-python scripts/run_matrix.py --smoke --models qwen3_0p6b_int4_g128
-python scripts/summarize_results.py results/latest
+"$Q3_PYTHON" scripts/run_matrix.py --smoke --models qwen3_0p6b_int4_g128
+"$Q3_PYTHON" scripts/summarize_results.py results/latest
 ```

@@ -12,30 +12,33 @@ The Python environment is intentionally fixed to:
 ~/envs/qwen_env
 OpenVINO 2026.4.1
 OpenVINO GenAI 2026.4.1.0
-Optimum Intel 2.1.0
-NNCF 3.2.0
+Optimum Intel 2.2.0
+NNCF 3.4.0
 Transformers 5.2.0
 Torch 2.13.0
 ```
 
-For the 2026.4.1 patch sweep, `scripts/env.sh` uses the existing local
-OpenVINO/GenAI Python bindings (2026.4.0 / 2026.4.0.0) with the source-built
-2026.4.1 GPU plugin from `benchmark/openvino/bin/intel64/Release`. The helper
-checks that the loaded plugin comes from that build directory. Both benchmark
-arms use this same runtime combination; no shared `install/` files are
-overwritten.
+For the 2026.4.1 benchmarks, `scripts/env.sh` loads the local OpenVINO
+2026.4.1 / GenAI 2026.4.1.0 Python bindings and the GPU plugin built from
+`benchmark/openvino/bin/intel64/Release`. Run `q3_require_environment` after
+sourcing it to verify the runtime versions and loaded plugin path. The C++
+`model_bench` binary must also be built against
+that 2026.4.1 runtime. Patch comparison builds write the plugin to `bin/` and
+do not run `cmake --install`; the full-generation workflow loads from the same
+directory without overwriting the existing `install/` tree.
 
-The shipped Qwen3 patches now target the OpenVINO 2026.4.1 release tag. The
-2026.3.1 measurements below remain historical; sequential 2026.4.1 patch results
-are recorded in [`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md).
+The shipped Qwen3 patches now target the OpenVINO 2026.4.1 base. The
+2026.3.1 measurements remain historical; the 2026.4.1 patch-by-patch
+rebenchmark is recorded in
+[`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md).
 
 ## Start here
 
 | Document | Contents |
 |---|---|
 | [`docs/optimizations.md`](docs/optimizations.md) | TTFT optimization log: hotspots, the three shipped patches, rejected ideas, remaining headroom |
-| [`docs/results.md`](docs/results.md) | Canonical cold-start TTFT report: per-patch and cumulative, arithmetic means |
-| [`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md) | New 2026.4.1 baseline and sequential patch sweep |
+| [`docs/results.md`](docs/results.md) | Historical 2026.3.1 cold-start TTFT report |
+| [`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md) | 2026.4.1 baseline and full-generation results at every cumulative patch stage |
 | [`patches/`](patches/) | Archived copy of the GPU-plugin patches with an index, correctness evidence, results, and a drift guard |
 | [`../benchmark/openvino/qwen3_patch/`](../benchmark/openvino/qwen3_patch/) | Canonical patch directory (delivery copy) and the full engineering write-up |
 
@@ -93,39 +96,56 @@ Run all missing 0.6B conversions first:
 
 ```bash
 cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
 bash scripts/convert_models.sh all
 ```
 
 Run a short one-iteration smoke matrix:
 
 ```bash
-python scripts/run_matrix.py --smoke
-python scripts/summarize_results.py results/latest
+cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+"$Q3_PYTHON" scripts/run_matrix.py --smoke
+"$Q3_PYTHON" scripts/summarize_results.py results/latest
 ```
 
 Run the formal matrix after conversions complete:
 
 ```bash
-python scripts/run_matrix.py --run-id gpu_1k_512_20260911 --iterations 10
-python scripts/summarize_results.py results/gpu_1k_512_20260911
+cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+"$Q3_PYTHON" scripts/run_matrix.py \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id gpu_1k_512_YYYYMMDD --iterations 10
+"$Q3_PYTHON" scripts/summarize_results.py results/gpu_1k_512_YYYYMMDD
 ```
 
 Run only the prefill portion:
 
 ```bash
-python scripts/run_matrix.py --prefill-only --run-id ttft_YYYYMMDD --iterations 10
+cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+"$Q3_PYTHON" scripts/run_matrix.py --prefill-only --run-id ttft_YYYYMMDD --iterations 10
 ```
 
 Run the baseline-first comparison for the complete three-patch stack:
 
 ```bash
-python scripts/run_matrix.py --patch-compare --run-id qwen3_patch_YYYYMMDD --iterations 10
+cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+"$Q3_PYTHON" scripts/run_matrix.py --patch-compare \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id qwen3_patch_YYYYMMDD --iterations 10
 ```
 
 Run the 0.6B DQ=0 experiment with the same three-patch stack:
 
 ```bash
-python scripts/run_matrix.py --patch-compare \
+cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
+"$Q3_PYTHON" scripts/run_matrix.py --patch-compare \
   --runtime-config configs/qwen3_int4_g128_dq0.json \
   --models qwen3_0p6b_fp32 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
   --run-id qwen3_dq0_0p6b_YYYYMMDD --iterations 10
@@ -139,11 +159,12 @@ cd ../benchmark/openvino
 git apply qwen3_patch/opt1_rms_block_access.patch
 git apply qwen3_patch/opt2_dynamic_quantize_reuse.patch
 git apply qwen3_patch/opt3_fuse_rope_into_rms.patch
-cmake --build build --target openvino_intel_gpu_plugin -j"$(nproc)"
-cp bin/intel64/Release/libopenvino_intel_gpu_plugin.so install/runtime/lib/intel64/
+cmake --build build --target openvino_intel_gpu_plugin --parallel 8
 ```
 
-The runner invokes both backends by default. Use `--backends python` or
+The build output stays in `bin/intel64/Release`; the runner loads the GPU plugin
+from that directory without installing or copying it into `install/`. The
+runner invokes both backends by default. Use `--backends python` or
 `--backends cpp` when repeating only one side. Every run stores the exact
 command, environment metadata, stdout/stderr log, detailed per-iteration
 report, and average report. Iteration zero is warm-up and is excluded from

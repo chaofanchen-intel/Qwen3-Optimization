@@ -1,8 +1,8 @@
 # Qwen3 GPU-plugin patches — archive and index
 
 Intel GPU plugin patches that reduce **cold-start prefill / TTFT** for dense
-Qwen3-0.6B and Qwen3-1.7B, with INT4 `group_size=128` as the primary target and
-INT4 per-output-channel as the secondary one.
+Qwen3-0.6B and Qwen3-1.7B. The current rebenchmark focuses on FP16 and INT8,
+with INT4 `group_size=128` and channel-wise variants also measured.
 
 This directory is an **archive** kept next to the measurements that justify it,
 so `Qwen3-Optimization/` is self-contained. The patches are developed and
@@ -10,6 +10,11 @@ delivered from
 [`../../benchmark/openvino/qwen3_patch/`](../../benchmark/openvino/qwen3_patch/) —
 that is the canonical copy, the one Intel receives, and the one
 `scripts/run_matrix.py --patch-compare` applies.
+
+The performance tables retained in `engineering_notes.md` are historical
+2026.3.1 TTFT data. Current 2026.4.1 full-generation measurements for each
+cumulative patch stage are in
+[`../docs/performance_2026.4.1.md`](../docs/performance_2026.4.1.md).
 
 Two copies means they can drift, so there is a guard:
 
@@ -34,13 +39,14 @@ Related documents in this workspace:
 | Document | Contents |
 |---|---|
 | [`../docs/optimizations.md`](../docs/optimizations.md) | Experiment log: how the hotspots were found, what was tried, what was rejected and why |
-| [`../docs/results.md`](../docs/results.md) | Canonical TTFT report, per-patch and cumulative, arithmetic means |
+| [`../docs/results.md`](../docs/results.md) | Historical 2026.3.1 TTFT report |
+| [`../docs/performance_2026.4.1.md`](../docs/performance_2026.4.1.md) | Current 2026.4.1 full-generation rebenchmark |
 | [`../results/`](../results/) | Raw per-run data with provenance (`metadata.json` records source commit, patch sha256, patch state, plugin binary hash) |
 
 ## Base and apply order
 
-Generated against this repository's OpenVINO checkout at release tag `2026.3.1`
-(`759c5a6ab8c066af5f4bc5ebd04643706012a37d`). Apply in order to a pristine tree:
+Generated against OpenVINO 2026.4.1 and validated against the pristine
+`2026.4_base` checkout. Apply in order to a pristine tree:
 
 ```bash
 cd <openvino-root>
@@ -48,9 +54,10 @@ git apply <this-dir>/opt1_rms_block_access.patch
 git apply <this-dir>/opt2_dynamic_quantize_reuse.patch
 git apply <this-dir>/opt3_fuse_rope_into_rms.patch   # after opt1: shares rms_gpu_bfyx_opt.cl
 cmake --build <build-dir> --target openvino_intel_gpu_plugin -j
-cp <build-root>/bin/intel64/Release/libopenvino_intel_gpu_plugin.so \
-   <install-root>/runtime/lib/intel64/
 ```
+
+Load the built plugin from `<openvino-root>/bin/intel64/Release` with
+`OV_PLUGIN_PATH`; do not copy it into the shared `install/` tree.
 
 opt-2 is independent; opt-3 touches the same kernel file as opt-1. Only opt-3
 has a runtime switch: `OV_DISABLE_ROPE_RMS_FUSION=1` turns the fusion off
@@ -120,7 +127,7 @@ baseline-first harness (measure, apply, rebuild, measure).
 | Qwen3-1.7B | **INT4 g128** | **−1.37%** | **−0.86%** | **−2.98%** |
 | Qwen3-1.7B | INT4 channel-wise | −2.49% | −2.64% | −4.01% |
 
-Cumulative against pristine 2026.3.1 from the formal all-precision stack run
+Cumulative against pristine 2026.3.1 in the historical formal all-precision stack run
 [`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/),
 in milliseconds:
 

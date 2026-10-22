@@ -1,8 +1,8 @@
 # Qwen3 Benchmark Results
 
 > **Historical results:** the runs in this report used the 2026.3.1 runtime.
-> The active patch base is now OpenVINO 2026.4.1; the sequential patch sweep on
-> that base is documented in
+> The active patch base is now OpenVINO 2026.4.1; the full-generation,
+> patch-by-patch rebenchmark on that base is documented in
 > [`performance_2026.4.1.md`](performance_2026.4.1.md).
 
 This is the canonical Qwen3 performance report. All headline latency and
@@ -201,19 +201,29 @@ All modes use the same runner:
 
 ```bash
 cd /home/chaofan/model_benchmark/Qwen3-Optimization
+source scripts/env.sh
 
 # Full 1000 -> 512 generation matrix, Python and C++.
-python scripts/run_matrix.py --run-id qwen3_full_YYYYMMDD --iterations 10
-python scripts/summarize_results.py results/qwen3_full_YYYYMMDD
+"$Q3_PYTHON" scripts/run_matrix.py \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id qwen3_full_YYYYMMDD --iterations 10
+"$Q3_PYTHON" scripts/summarize_results.py results/qwen3_full_YYYYMMDD
 
 # Cold prefill only.
-python scripts/run_matrix.py --prefill-only --run-id qwen3_ttft_YYYYMMDD --iterations 10
+"$Q3_PYTHON" scripts/run_matrix.py --prefill-only \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id qwen3_ttft_YYYYMMDD --iterations 10
 
 # Source patch comparison: baseline first, optimized second.
-python scripts/run_matrix.py --patch-compare --run-id qwen3_patch_YYYYMMDD --iterations 10
+"$Q3_PYTHON" scripts/run_matrix.py --patch-compare \
+  --models qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
+           qwen3_1p7b_fp16 qwen3_1p7b_int8 qwen3_1p7b_int4_g128 qwen3_1p7b_int4_channelwise \
+  --run-id qwen3_patch_YYYYMMDD --iterations 10
 
 # 0.6B DQ=0 plus the same three-patch comparison.
-python scripts/run_matrix.py --patch-compare \
+"$Q3_PYTHON" scripts/run_matrix.py --patch-compare \
   --runtime-config configs/qwen3_int4_g128_dq0.json \
   --models qwen3_0p6b_fp32 qwen3_0p6b_fp16 qwen3_0p6b_int8 qwen3_0p6b_int4_g128 qwen3_0p6b_int4_channelwise \
   --run-id qwen3_dq0_0p6b_fp16_YYYYMMDD --iterations 10

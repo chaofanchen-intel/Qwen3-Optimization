@@ -2,12 +2,13 @@
 
 > The profiling narrative and measurements in this file are historical
 > 2026.3.1 experiments. The active patches are now based on OpenVINO 2026.4.1;
-> see [`performance_2026.4.1.md`](performance_2026.4.1.md) for the new runtime
-> comparison.
+> see [`performance_2026.4.1.md`](performance_2026.4.1.md) for the current
+> baseline and full-generation measurements for FP16, INT8, and both INT4
+> variants at each cumulative patch stage.
 
-Target: reduce cold-start TTFT of Qwen3-0.6B and Qwen3-1.7B on the Intel iGPU,
-with INT4 `group_size=128` as the primary case and INT4 per-output-channel as
-the secondary one.
+The current rebenchmark focuses on Qwen3-0.6B FP16 and INT8, and includes
+Qwen3-0.6B/Qwen3-1.7B INT4 `group_size=128` and channel-wise variants. The
+optimization history below retains the original INT4-focused 2026.3.1 studies.
 
 Patches live in
 [`../../benchmark/openvino/qwen3_patch/`](../../benchmark/openvino/qwen3_patch/)
@@ -20,9 +21,10 @@ numbers are.
 ## 1. Fixing the measurement first
 
 The pre-existing TTFT numbers were unusable — they were prefix-cache hits, not
-prefills, and understated real TTFT by 3-5x. The canonical baseline-first
-comparison is [`results.md`](results.md), backed by the formal full-stack run
-[`opt123_all_precisions_fp16_20260915`](../results/opt123_all_precisions_fp16_20260915/).
+prefills, and understated real TTFT by 3-5x. The historical 2026.3.1
+baseline-first comparison is [`results.md`](results.md); the current 2026.4.1
+full-generation measurements are in
+[`performance_2026.4.1.md`](performance_2026.4.1.md).
 
 Two further methodology corrections were needed before any optimization work:
 

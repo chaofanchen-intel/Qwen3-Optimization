@@ -27,7 +27,7 @@ DEFAULT_PATCHES = [
     DEFAULT_OV_ROOT / "qwen3_patch" / "opt2_dynamic_quantize_reuse.patch",
     DEFAULT_OV_ROOT / "qwen3_patch" / "opt3_fuse_rope_into_rms.patch",
 ]
-PLUGIN_RELATIVE = Path("install/runtime/lib/intel64/libopenvino_intel_gpu_plugin.so")
+PLUGIN_RELATIVE = Path("bin/intel64/Release/libopenvino_intel_gpu_plugin.so")
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,15 +65,23 @@ def load_environment() -> dict[str, str]:
     env["Q3_OPTIMUM_CLI"] = str(q3_python_env / "bin" / "optimum-cli")
     ov_root = Path(os.environ.get("Q3_OV_ROOT", ROOT.parent / "benchmark" / "openvino"))
     ov_install = ov_root / "install"
+    ov_bin = ov_root / "bin" / "intel64" / "Release"
     ov_genai_root = Path(str(ov_root) + ".genai")
     env["Q3_OV_ROOT"] = str(ov_root)
     env["Q3_OV_INSTALL"] = str(ov_install)
+    env["Q3_OV_BIN"] = str(ov_bin)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(ov_genai_root / "tools" / "llm_bench"), str(ov_install / "python"), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
     env["LD_LIBRARY_PATH"] = os.pathsep.join(
-        [str(ov_install / "runtime" / "lib" / "intel64"), str(ov_install / "runtime" / "3rdparty" / "tbb" / "lib"), env.get("LD_LIBRARY_PATH", "")]
+        [str(ov_bin), str(ov_install / "runtime" / "lib" / "intel64"), str(ov_install / "runtime" / "3rdparty" / "tbb" / "lib"), env.get("LD_LIBRARY_PATH", "")]
     ).rstrip(os.pathsep)
+    plugin_paths = [str(ov_bin)]
+    plugin_paths.extend(
+        path for path in env.get("OV_PLUGIN_PATH", "").split(os.pathsep)
+        if path and path != str(ov_bin)
+    )
+    env["OV_PLUGIN_PATH"] = os.pathsep.join(plugin_paths)
     return env
 
 
@@ -249,19 +257,22 @@ def build_plugin(ov_root: Path, build_dir: Path, jobs: int) -> list[str]:
         "--parallel",
         str(jobs),
     ]
-    install_command = ["cmake", "--install", str(build_dir)]
     run_command(build_command, REPO)
-    run_command(install_command, REPO)
     plugin_path = ov_root / PLUGIN_RELATIVE
     if not plugin_path.is_file():
-        raise RuntimeError(f"plugin artifact was not installed: {plugin_path}")
-    return [command_text(build_command), command_text(install_command)]
+        raise RuntimeError(f"plugin artifact was not built: {plugin_path}")
+    return [command_text(build_command)]
 
 
 def patch_child_environment(ov_root: Path) -> dict[str, str]:
     env = os.environ.copy()
     install = ov_root / "install"
+    ov_bin = ov_root / "bin" / "intel64" / "Release"
+    env["Q3_OV_ROOT"] = str(ov_root)
+    env["Q3_OV_INSTALL"] = str(install)
+    env["Q3_OV_BIN"] = str(ov_bin)
     library_paths = [
+        ov_bin,
         install / "runtime" / "lib" / "intel64",
         install / "runtime" / "3rdparty" / "tbb" / "lib",
     ]
@@ -269,6 +280,12 @@ def patch_child_environment(ov_root: Path) -> dict[str, str]:
     env["LD_LIBRARY_PATH"] = os.pathsep.join(
         [str(path) for path in library_paths] + ([existing] if existing else [])
     )
+    plugin_paths = [str(ov_bin)]
+    plugin_paths.extend(
+        path for path in env.get("OV_PLUGIN_PATH", "").split(os.pathsep)
+        if path and path != str(ov_bin)
+    )
+    env["OV_PLUGIN_PATH"] = os.pathsep.join(plugin_paths)
     return env
 
 

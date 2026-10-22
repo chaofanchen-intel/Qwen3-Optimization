@@ -40,8 +40,8 @@ import openvino
 import openvino_genai
 core = openvino.Core()
 gpu_version = core.get_versions("GPU")["GPU"]
-assert openvino.__version__.startswith("2026.4.0"), openvino.__version__
-assert openvino_genai.__version__.startswith("2026.4.0.0"), openvino_genai.__version__
+assert openvino.__version__.startswith("2026.4.1"), openvino.__version__
+assert openvino_genai.__version__.startswith("2026.4.1.0"), openvino_genai.__version__
 assert "2026.4.1-" in str(gpu_version), gpu_version
 plugin_paths = {
     line.rstrip().split()[-1]
