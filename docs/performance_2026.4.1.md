@@ -121,6 +121,55 @@ This is a performance sweep, not a numerical-equivalence or broad model-quality
 validation. Existing correctness evidence remains in the patch engineering
 notes.
 
+## opt-4 / opt-5 / opt-6 stage results (2026-10-23)
+
+Added after the sweep above, on the same machine, same runtime and protocol except that this run is
+**prefill-only** (1000 input tokens, one generated token, 10 measured iterations after one warm-up) because the
+patches only touch prefill. Both drivers, arithmetic mean +/- std in milliseconds. Stage builds are cumulative:
+opt-1+2+3 is the plugin of the table above (`6c16a6ea...`). opt-1+2+3 and opt-1..5 were measured twice to show the
+drift of the machine (up to ~1.5 ms over a few minutes).
+
+| Variant | Backend | opt-1+2+3 (2 runs) | + opt-4 | + opt-5 (2 runs) | + opt-6 | opt-4 / opt-5 / opt-6 | Total vs opt-1+2+3 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| FP16 | Python | 133.56 ± 0.36 / 133.09 ± 0.25 | 131.39 ± 0.21 | 127.06 ± 0.27 / 128.66 ± 0.16 | 126.44 ± 0.21 | -1.4% / -2.7% / -1.1% | -5.2% |
+| FP16 | C++ | 133.67 ± 0.19 / 133.49 ± 0.20 | 132.11 ± 0.17 | 127.62 ± 0.15 / 130.03 ± 4.33 | 127.52 ± 1.55 | -1.1% / -2.5% / -1.0% | -4.5% |
+| INT8 | Python | 114.46 ± 0.30 / 114.50 ± 0.23 | 114.11 ± 0.12 | 109.73 ± 0.14 / 110.20 ± 0.17 | 110.68 ± 0.30 | -0.3% / -3.6% / +0.6% | -3.3% |
+| INT8 | C++ | 114.09 ± 0.15 / 114.20 ± 0.18 | 113.97 ± 0.17 | 110.00 ± 0.23 / 110.93 ± 0.30 | 109.76 ± 0.14 | -0.2% / -3.1% / -0.6% | -3.8% |
+| INT4 g128 | Python | 126.84 ± 1.08 / 126.44 ± 0.34 | 126.77 ± 0.20 | 122.89 ± 0.22 / 122.78 ± 0.36 | 122.79 ± 0.15 | +0.1% / -3.1% / -0.0% | -3.0% |
+| INT4 g128 | C++ | 126.19 ± 0.27 / 126.79 ± 0.33 | 126.76 ± 0.27 | 122.36 ± 0.29 / 122.69 ± 0.20 | 123.11 ± 0.28 | +0.2% / -3.3% / +0.5% | -2.7% |
+| INT4 channel-wise | Python | 100.52 ± 0.26 / 99.55 ± 0.21 | 100.49 ± 0.24 | 95.90 ± 0.22 / 96.17 ± 0.20 | 96.24 ± 0.20 | +0.5% / -4.4% / +0.2% | -3.8% |
+| INT4 channel-wise | C++ | 100.36 ± 0.30 / 99.83 ± 0.34 | 99.92 ± 0.33 | 95.85 ± 0.24 / 95.98 ± 0.27 | 96.47 ± 0.20 | -0.2% / -4.0% / +0.6% | -3.6% |
+
+- Absolute numbers move between sessions: the opt-1+2+3 FP16 stage read 137-138 ms in the full-generation sweep above and
+  133.1-133.7 ms here (INT4-cw 100.0 vs 99.5-100.5, INT8 114.9 vs 114.1-114.5, INT4-g128 127.1 vs 126.2-126.8). Compare
+  columns within a table, not across tables.
+- opt-4 only changes the uncompressed (FP16) KV cache update, opt-6 only fuses uncompressed FCs: the INT rows of those
+  two columns are unchanged code and their +/-0.6% is the drift. The reliable opt-6 number is the interleaved A/B
+  FP16 127.7 -> 125.9 ms (4 rounds, every round faster; 1.7B FP16 -1.1 ms).
+- opt-5 is the only non-bit-exact patch (different attention tile, results agree to rounding; greedy output flips on
+  near-ties for some long prompts of the quantized models). A bit-exact variant that keeps ~60% of its gain is documented
+  in the patch README.
+
+Qwen3-1.7B (opt-1+2+3 measured twice, then the opt-1..5 stage):
+
+| Variant | Backend | opt-1+2+3 (2 runs) | + opt-4/5 | Change |
+|---|---|---:|---:|---:|
+| FP16 | Python | 350.87 ± 1.76 / 350.19 ± 0.38 | 343.12 ± 0.41 | -2.1% |
+| FP16 | C++ | 351.00 ± 2.32 / 350.38 ± 1.41 | 342.75 ± 0.40 | -2.3% |
+| INT8 | Python | 252.02 ± 0.40 / 253.72 ± 0.34 | 248.96 ± 0.27 | -1.5% |
+| INT8 | C++ | 252.72 ± 0.28 / 254.07 ± 0.33 | 247.84 ± 0.28 | -2.2% |
+| INT4 g128 | Python | 257.73 ± 0.25 / 259.71 ± 0.42 | 255.86 ± 0.62 | -1.1% |
+| INT4 g128 | C++ | 258.41 ± 0.33 / 260.53 ± 0.60 | 255.93 ± 0.76 | -1.4% |
+| INT4 channel-wise | Python | 201.67 ± 0.24 / 202.65 ± 0.61 | 197.14 ± 0.59 | -2.5% |
+| INT4 channel-wise | C++ | 201.87 ± 0.43 / 201.37 ± 0.76 | 198.52 ± 0.35 | -1.5% |
+
+Raw reports, per-stage plugin binaries and the manifest (source commit, patch hashes, plugin hashes, correctness gate
+results) are in
+[`../results/runs/opt456_stage_compare_2026.4.1_20261023/`](../results/runs/opt456_stage_compare_2026.4.1_20261023/);
+the aggregated numbers are in its `stage_metrics.csv`. Kernel attribution before/after is in
+[`optimizations.md`](optimizations.md) section 11 and `../results/hotspot/q3_0p6b_{FP16,INT8}_{opt123,opt12345}_*`.
+This is a performance and equivalence check, not a model-quality evaluation.
+
 ## Earlier focused TTFT sweep (2026-10-21)
 
 This smaller, prior experiment used only Qwen3-1.7B INT4 channel-wise and four

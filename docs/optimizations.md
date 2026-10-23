@@ -1,10 +1,10 @@
 # Qwen3 Prefill/TTFT Optimization
 
-> The profiling narrative and measurements in this file are historical
-> 2026.3.1 experiments. The active patches are now based on OpenVINO 2026.4.1;
-> see [`performance_2026.4.1.md`](performance_2026.4.1.md) for the current
-> baseline and full-generation measurements for FP16, INT8, and both INT4
-> variants at each cumulative patch stage.
+> Sections 1-10 are the historical 2026.3.1 INT4-g128 experiments. The active
+> patches are based on OpenVINO 2026.4.1; see
+> [`performance_2026.4.1.md`](performance_2026.4.1.md) for the current
+> baseline and full-generation measurements, and **section 11** below for the
+> FP16/INT8 follow-up that added opt-4, opt-5 and opt-6.
 
 The current rebenchmark focuses on Qwen3-0.6B FP16 and INT8, and includes
 Qwen3-0.6B/Qwen3-1.7B INT4 `group_size=128` and channel-wise variants. The
@@ -338,3 +338,79 @@ VTune note: `collect-memory-bandwidth` needs the PAX PMU-reservation driver,
 which is not installed here, and enabling it aborts the collection. GPU metrics
 come from the `xe` driver's observation interface
 (`/proc/sys/dev/xe/observation_paranoid = 0`) and work without it.
+
+## 11. FP16/INT8 follow-up on 2026.4.1: opt-4, opt-5, opt-6 (2026-10-22/23)
+
+Goal: push the TTFT of Qwen3-0.6B FP16 and INT8 further after opt-1..3. Method as before
+(VTune `gpu-hotspots` on the real PA pipeline, mean +/- std, md5 gate); the new part is that for
+the first time the kernels were also compared against **hardware ceilings**, which turned out to
+decide most of the outcome. Full write-up with the numbers:
+[`qwen3_patch/README.md`](../../benchmark/openvino/qwen3_patch/README.md).
+
+### 11.1 Where FP16 / INT8 stand after opt-1..3
+
+| Kernel family | FP16 ms | INT8 ms |
+|---|---:|---:|
+| `gemm_kernel` (oneDNN FC, incl. `lm_head` 7.4 / 3.7) | 99.12 (73%) | 66.54 (58%) |
+| `sdpa_micro` prefill | 17.25 | 17.08 |
+| `rms_gpu_bfyx_opt` (with fused RoPE) | 11.79 | 14.20 |
+| `dynamic_quantize_gpu_opt` | - | 11.87 |
+| `pa_kv_cache_update_ref` | 7.30 | 5.48 |
+| total (TTFT 133.4 / 114.5) | 135.67 | 115.44 |
+
+Note that the FP16 graph differs from the INT4 one: its Q/K/V are three separate GEMMs (N = 2048,
+1024, 1024) and its KV cache is uncompressed; the INT8 graph has the fused QKV and an i8 KV cache.
+
+### 11.2 What shipped
+
+| Patch | Effect on 0.6B (C++ / Python, stage runs) |
+|---|---|
+| opt-4 vectorized full-block KV-cache update (FP16 cache only, bit-exact) | FP16 -1.1% / -1.4%, kernel 7.30 -> 5.50 ms |
+| opt-5 `sdpa_micro` tile 32x128 on 8 sub-groups for integrated Xe3, PA prefill, head 128 (not bit-exact; 256-key bit-exact variant documented) | FP16 -2.5% / -2.7%, INT8 -3.1% / -3.6%, INT4 -3.1% to -4.4%; `sdpa_micro` 17.2 -> 12.8 ms; 2000/4000-token prompts -11.5/-31.5 ms |
+| opt-6 fuse Q/K/V of uncompressed FCs (bit-exact, FP16 only) | FP16 127.7 -> 125.9 ms (interleaved A/B) |
+| **Total vs opt-1+2+3** | **FP16 -4.5 to -5.2%, INT8 -3.3 to -3.8%, INT4 g128 -2.7 to -3.0%, INT4 cw -3.6 to -3.8%**; 1.7B -1.1 to -2.5% |
+
+### 11.3 What the hardware says about the rest
+
+These are the facts that stopped further kernel work; each is reproducible with
+[`scripts/tools/gemm_probe/`](../scripts/tools/gemm_probe/).
+
+1. **The GPU sees 42 GB/s of DRAM read bandwidth and ~27 GB/s write** (60 GB/s copy), and a 2-6 MB
+   buffer is not read faster than a 512 MB one: there is no cache between kernels worth the name.
+   RMS (218 us for the 8 MB `q_norm` moves), the KV update, `dynamic_quantize` and the 311 MB
+   `lm_head` GEMV (7.4 ms = 42 GB/s) are all *at* this floor. Only removing traffic helps, which is why
+   opt-3 (a fusion) worked and RMS micro-tuning did not.
+2. **XMX throughput is data dependent.** The same f16 GEMM runs at 17-19 TFLOPS with constant-ish
+   operands and at 9.3-13 TFLOPS with random ones (also a 4096^3 GEMM); clocks stay at 2450 MHz and no
+   throttle reason is set. The model's GEMMs run at ~9.6 TFLOPS and `sdpa_micro` at ~9 TFLOPS, so ~85%
+   of the FP16 prefill is bounded by this. Corollary: a GEMM microbenchmark on constant data (and
+   `benchdnn`'s default fill) overestimates the model by ~1.7x - the first probe here did, and cost an
+   afternoon of looking for a gap that did not exist.
+3. **oneDNN's GEMM tile selection is already right**: of ~30 strategies per problem the selector's pick was
+   the fastest (FP16 q-proj 11.9 vs 11.0 TFLOPS runner-up).
+4. **Binary post-ops are expensive.** On INT8 1024x1024x3072: no post-op 360 us, swish 377 us, binary
+   mul/add/sum 543 us. A post-op that reads a second [M, N] tensor is not prefetched, so the read latency
+   is exposed at the end of each tile: ~180 us per layer for gate x up, ~65 and ~55 us for the two residual
+   adds, 4-8 ms per prefill. It lives inside the oneDNN GEMM generator (open item 1).
+
+### 11.4 Measurement traps found this time
+
+- **The runtime loads the GPU plugin from the directory of `libopenvino.so` (here `bin/intel64/Release`).**
+  `OV_PLUGIN_PATH` and `LD_LIBRARY_PATH` do not redirect it. An A/B that "swapped" plugins through those
+  variables compared the same binary with itself (and produced a plausible-looking -0.4 ms for opt-6 whose
+  real, interleaved value is -1.8 ms). `scripts/tools/plugin_ab.sh` copies each candidate over the plugin and restores it.
+- Verify which plugin is mapped (`/proc/self/maps`) before believing an A/B or an md5 comparison.
+- The OV per-op counter of a `PagedAttentionExtension` node does not include every kernel of the node; do not use
+  it to attribute the KV update (use VTune).
+- Sequential stage runs drift by ~1-1.5 ms over minutes; interleave, and repeat the baseline stage.
+
+### 11.5 Negative results of this round
+
+| Idea | Result |
+|---|---|
+| Enable the oneDNN gated-MLP fusion (`FuseGatedMLP`) | FP16 +14% (152.2 vs 133.4 ms), INT8 +44% |
+| 4-way key/value split of the KV update | no change |
+| Vector path for the INT8 by-channel cache | TTFT unchanged (traffic-bound at 5.5 ms) |
+| GEMM strategy sweep / forced C prefetch | default already best / prefetch variants hang kernel creation |
+| `DYNAMIC_QUANTIZATION_GROUP_SIZE` 256..per-token for INT8 | -1.4 to -3.1 ms, but the plugin clamps INT8 to 128-element groups on purpose (accuracy) - runtime option only |
+

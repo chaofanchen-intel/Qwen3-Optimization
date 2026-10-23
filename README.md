@@ -36,7 +36,7 @@ rebenchmark is recorded in
 
 | Document | Contents |
 |---|---|
-| [`docs/optimizations.md`](docs/optimizations.md) | TTFT optimization log: hotspots, the three shipped patches, rejected ideas, remaining headroom |
+| [`docs/optimizations.md`](docs/optimizations.md) | TTFT optimization log: hotspots, the shipped patches (opt-1..3 in sections 1-10, opt-4..6 and the hardware ceilings in section 11), rejected ideas, remaining headroom |
 | [`docs/results.md`](docs/results.md) | Historical 2026.3.1 cold-start TTFT report |
 | [`docs/performance_2026.4.1.md`](docs/performance_2026.4.1.md) | 2026.4.1 baseline and full-generation results at every cumulative patch stage |
 | [`patches/`](patches/) | Archived copy of the GPU-plugin patches with an index, correctness evidence, results, and a drift guard |
@@ -63,7 +63,10 @@ Qwen3-Optimization/
     ├── convert_models.sh    # download and convert missing 0.6B variants
     ├── run_matrix.py        # the single benchmark entry point
     ├── summarize_results.py # normalize, compare, and render Markdown/CSV
-    └── vtune_gpu.sh         # VTune gpu-hotspots on the real PA pipeline
+    ├── vtune_gpu.sh         # VTune gpu-hotspots on the real PA pipeline
+    ├── md5_check.py         # bit-exactness gate: 6 prompts x 96 greedy tokens -> md5 per text
+    └── tools/               # plugin_ab.sh (interleaved plugin A/B), ttft_mean.sh, sdpa tile sweep,
+                             #   gemm_probe/ (standalone oneDNN GEMM and DRAM probes)
 ```
 
   > **TTFT measurement contract.** All benchmark modes use prompt permutation ON
@@ -159,6 +162,9 @@ cd ../benchmark/openvino
 git apply qwen3_patch/opt1_rms_block_access.patch
 git apply qwen3_patch/opt2_dynamic_quantize_reuse.patch
 git apply qwen3_patch/opt3_fuse_rope_into_rms.patch
+git apply qwen3_patch/opt4_pa_kv_cache_vector_update.patch
+git apply qwen3_patch/opt5_sdpa_micro_xe3_igpu_tile.patch
+git apply qwen3_patch/opt6_fuse_uncompressed_qkv_fcs.patch
 cmake --build build --target openvino_intel_gpu_plugin --parallel 8
 ```
 

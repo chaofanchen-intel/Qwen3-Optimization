@@ -30,6 +30,9 @@ Two copies means they can drift, so there is a guard:
 | `opt1_rms_block_access.patch` | opt-1 source patch |
 | `opt2_dynamic_quantize_reuse.patch` | opt-2 source patch |
 | `opt3_fuse_rope_into_rms.patch` | opt-3 source patch |
+| `opt4_pa_kv_cache_vector_update.patch` | opt-4 source patch (FP16 KV-cache update with vector stores; bit-exact) |
+| `opt5_sdpa_micro_xe3_igpu_tile.patch` | opt-5 source patch (`sdpa_micro` tile for integrated Xe3; **not bit-exact**, see the notes) |
+| `opt6_fuse_uncompressed_qkv_fcs.patch` | opt-6 source patch (Q/K/V fusion for uncompressed FCs, with unit tests; bit-exact) |
 | `engineering_notes.md` | Snapshot of the canonical patch README: full rationale, per-kernel VTune numbers, correctness argument, negative results, open items |
 | `MANIFEST.sha256` | Hashes of everything above |
 | `sync_from_canonical.sh` | Drift guard / resync |
@@ -53,17 +56,20 @@ cd <openvino-root>
 git apply <this-dir>/opt1_rms_block_access.patch
 git apply <this-dir>/opt2_dynamic_quantize_reuse.patch
 git apply <this-dir>/opt3_fuse_rope_into_rms.patch   # after opt1: shares rms_gpu_bfyx_opt.cl
+git apply <this-dir>/opt4_pa_kv_cache_vector_update.patch
+git apply <this-dir>/opt5_sdpa_micro_xe3_igpu_tile.patch
+git apply <this-dir>/opt6_fuse_uncompressed_qkv_fcs.patch
 cmake --build <build-dir> --target openvino_intel_gpu_plugin -j
 ```
 
 Load the built plugin from `<openvino-root>/bin/intel64/Release` with
 `OV_PLUGIN_PATH`; do not copy it into the shared `install/` tree.
 
-opt-2 is independent; opt-3 touches the same kernel file as opt-1. Only opt-3
+opt-2 and opt-4..6 are independent; opt-3 touches the same kernel file as opt-1. Only opt-3
 has a runtime switch: `OV_DISABLE_ROPE_RMS_FUSION=1` turns the fusion off
 without rebuilding (used for A/B).
 
-Together they change 11 files, +364/−13 lines.
+Together they change 18 files (including the new unit tests of opt-6), +635/−13 lines.
 
 ## What each patch does
 
@@ -100,6 +106,28 @@ per row with `SUBGROUP_BLOCK_SIZE == items_num == 8`, so `BLOCK_READ8` leaves
 lands **in the same lane** — no cross-lane shuffle, no extra barrier. The 56
 `rope_opt` dispatches disappear entirely.
 
+### opt-4 — vector stores for the paged KV-cache update
+
+For a full 16-token block of an uncompressed cache the reference kernel wrote the transposed key cache with one
+2-byte scalar store per lane per token (20 GB/s). The patch transposes the block in registers and writes every key
+channel's 16 tokens as one 32-byte store, copies value rows with sub-group block writes, and splits key and value over
+two sub-groups. `pa_kv_cache_update_ref` 7.30 -> 5.50 ms on Qwen3-0.6B FP16. Compressed (INT8/INT4) caches, partial
+blocks and decode keep the old code.
+
+### opt-5 — `sdpa_micro` tile for integrated Xe3
+
+The PA-prefill tile for head size 128 comes from Ponte Vecchio (128 queries x 256 keys, 32 sub-groups per work group) and
+leaves a 4-Xe-core GPU with ~128 coarse work groups. 32 queries x 128 keys on 8 sub-groups (4x more work groups) cuts
+`sdpa_micro` 17.2 -> 12.8 ms. Applied only for xe3 + integrated + paged-attention prefill + head size 128. **Not
+bit-exact** (128-key tile = different online-softmax accumulation order); a bit-exact 256-key variant keeps ~60% of the
+gain, see the patch README.
+
+### opt-6 — fuse Q/K/V of uncompressed models
+
+New `FullyConnectedUncompressedHorizontalFusion`: three bias-free, constant-weight `FullyConnected` nodes on one
+activation become one FC over concatenated weights plus an in-place-crop `VariadicSplit`, the same rewrite the existing
+pass does for compressed FCs. FP16 -1.8 ms on 0.6B; byte-identical output.
+
 ## Correctness
 
 | Patch | Status | Evidence |
@@ -107,6 +135,9 @@ lands **in the same lane** — no cross-lane shuffle, no extra barrier. The 56
 | opt-1 | Bit-exact | Same elements accumulated in the same per-lane order; only the fetch instruction changes. 39/39 RMS GPU unit tests pass. |
 | opt-2 | Bit-exact | Graph-level dedup of an identical computation; the decode-time f16 passthrough is preserved. |
 | opt-3 | Bit-exact | 4 prompts x 128 greedy tokens reproduce the **unpatched plugin's output md5** on Qwen3-0.6B INT4-g128 (`0f7fb0eaec35ce0f5a094e93cdaaad73`) and Qwen3-1.7B INT4 channel-wise (`22e5ea17ec95a94b11975930c397d189`). 39/39 RMS and 12/12 RoPE GPU unit tests pass. |
+| opt-4 | Bit-exact | `scripts/md5_check.py` (6 prompts x 96 greedy tokens) byte-identical to opt-1+2+3 on 0.6B FP16/INT8/INT4-g128/INT4-cw and 1.7B INT8/INT4-g128; 225 paged-attention/sdpa/kv-reorder unit tests: 221 pass, 4 skipped, 0 fail. |
+| opt-5 | **Not bit-exact** | Identical on 0.6B FP16; greedy near-tie flips on the long prompts of INT8 (2/6) and INT4 (3/6) models. The 256-key variant is byte-identical on 0.6B INT8/INT4/INT4-cw and 1.7B INT8. Same unit tests pass. |
+| opt-6 | Bit-exact | Byte-identical to opt-1..5 on 0.6B FP16/FP32/INT8/INT4-g128/INT4-cw and 1.7B FP16/INT8/INT4-g128; 5 new unit tests, 16/16 horizontal-fusion tests pass. |
 
 ## Results
 

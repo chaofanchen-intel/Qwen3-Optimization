@@ -21,6 +21,9 @@ declare -A FILES=(
     [opt1_rms_block_access.patch]=opt1_rms_block_access.patch
     [opt2_dynamic_quantize_reuse.patch]=opt2_dynamic_quantize_reuse.patch
     [opt3_fuse_rope_into_rms.patch]=opt3_fuse_rope_into_rms.patch
+    [opt4_pa_kv_cache_vector_update.patch]=opt4_pa_kv_cache_vector_update.patch
+    [opt5_sdpa_micro_xe3_igpu_tile.patch]=opt5_sdpa_micro_xe3_igpu_tile.patch
+    [opt6_fuse_uncompressed_qkv_fcs.patch]=opt6_fuse_uncompressed_qkv_fcs.patch
     [README.md]=engineering_notes.md
 )
 

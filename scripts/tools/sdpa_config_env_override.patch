@@ -1,0 +1,18 @@
+--- a/src/plugins/intel_gpu/src/graph/impls/ocl_v2/sdpa/sdpa_gen_micro.cpp	2026-10-23 01:30:25.640547583 +0800
++++ b/src/plugins/intel_gpu/src/graph/impls/ocl_v2/sdpa/sdpa_gen_micro.cpp	2026-10-23 01:30:25.649854391 +0800
+@@ -1579,6 +1579,15 @@
+     }
+     }
+ 
++    // DEV ONLY: override the prefill tile configuration, "OV_SDPA_CFG=m_kq,n_kq,m_vs,n_vs,wg_m_kq,wg_n_kq,wg_m_vs,wg_n_vs".
++    // Constraints: m_vs*wg_m_vs == head size, n_vs*wg_n_vs == n_kq*wg_n_kq, wg_m_kq*wg_n_kq == wg_m_vs*wg_n_vs.
++    static sdpa_config_t env_cfg;
++    if (is_prefill && std::getenv("OV_SDPA_CFG")) {
++        int v[8] = {};
++        std::sscanf(std::getenv("OV_SDPA_CFG"), "%d,%d,%d,%d,%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
++        env_cfg = {v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]};
++        config = &env_cfg;
++    }
+     if (!is_prefill) {
+         const auto& wg_cfg = GPU_DEBUG_VALUE_OR(params.get_program().get_config().get_micro_sdpa_workgroup_config(), std::vector<int>{});
+         if (wg_cfg.size() >= 4) {

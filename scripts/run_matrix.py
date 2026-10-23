@@ -26,6 +26,9 @@ DEFAULT_PATCHES = [
     DEFAULT_OV_ROOT / "qwen3_patch" / "opt1_rms_block_access.patch",
     DEFAULT_OV_ROOT / "qwen3_patch" / "opt2_dynamic_quantize_reuse.patch",
     DEFAULT_OV_ROOT / "qwen3_patch" / "opt3_fuse_rope_into_rms.patch",
+    DEFAULT_OV_ROOT / "qwen3_patch" / "opt4_pa_kv_cache_vector_update.patch",
+    DEFAULT_OV_ROOT / "qwen3_patch" / "opt5_sdpa_micro_xe3_igpu_tile.patch",
+    DEFAULT_OV_ROOT / "qwen3_patch" / "opt6_fuse_uncompressed_qkv_fcs.patch",
 ]
 PLUGIN_RELATIVE = Path("bin/intel64/Release/libopenvino_intel_gpu_plugin.so")
 
@@ -45,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--openvino-root", type=Path, default=None)
     parser.add_argument("--patches", type=Path, nargs="+", default=DEFAULT_PATCHES,
                         help="patch stack for --patch-compare, applied in listed order")
-    parser.add_argument("--patch-stage", type=int, choices=(1, 2, 3), default=None,
+    parser.add_argument("--patch-stage", type=int, choices=range(1, len(DEFAULT_PATCHES) + 1), default=None,
                         help="compare the previous stack stage with this patch stage")
     parser.add_argument("--runtime-config", type=Path, default=None,
                         help="JSON of extra OpenVINO plugin properties for C++ runs")
@@ -429,7 +432,7 @@ def run_patch_comparison(args: argparse.Namespace) -> int:
     if not build_dir.is_dir():
         raise SystemExit(f"OpenVINO build directory not found: {build_dir}")
     if len(patches) != len(DEFAULT_PATCHES):
-        raise SystemExit("--patches must name the complete three-patch stack")
+        raise SystemExit("--patches must name the complete patch stack")
 
     initial_prefix = patch_prefix_state(ov_root, patches)
     if args.patch_stage is None:
